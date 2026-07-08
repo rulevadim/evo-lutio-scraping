@@ -1,6 +1,6 @@
 import { useDb } from '../../db'
 import { sleep } from './client'
-import { fetchComments } from './comments'
+import { fetchAllComments } from './comments'
 import { fetchRecentPosts } from './rss'
 import { htmlToText } from './text'
 
@@ -38,7 +38,7 @@ export async function scrape(limit = 10): Promise<ScrapeResult> {
   let commentCount = 0
 
   for (const post of posts) {
-    const comments = await fetchComments(post.id)
+    const comments = await fetchAllComments(post.id)
     const now = Math.floor(Date.now() / 1000)
 
     db.transaction(() => {

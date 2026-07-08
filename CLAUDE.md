@@ -32,10 +32,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Список постов + тело** — RSS `/data/rss`: последние ~25 постов (берём 10),
   пермалинки вида `/<ditemid>.html`, заголовок, дата и **полный HTML статьи прямо
   в `<description>`** (с картинками). Поэтому отдельные страницы постов не парсим.
-- **Комментарии** — JSON-RPC `/__rpc_get_thread?journal=evo_lutio&itemid=<ditemid>`:
+- **Комментарии** — JSON-RPC `/__rpc_get_thread?journal=evo_lutio&itemid=<ditemid>&page=N`:
   массив `comments` с полями `dname` (автор), `article` (HTML), `ctime_ts` (дата),
-  `level`/`parent` (вложенность). Отдаётся страницами — берём **только первую**
-  (топ-N веток), чтобы не упереться в тысячи запросов и rate-limit.
+  `level`/`parent` (вложенность). Пагинация по **15 верхнеуровневых веток на
+  страницу** (`COMMENTS_PAGE_SIZE`); вложенные ответы идут целиком внутри своей
+  ветки. Скрейпер выкачивает **все страницы** (цикл `page=1,2,…` до набора
+  `replycount` либо неполной страницы; предохранитель `maxPages`). В метаданных
+  RPC отдаёт только `replycount` — число страниц вычисляем сами.
 
 Скрейпер вежливый: кастомный `User-Agent` и паузы между запросами. Страницы
 читаются из SQLite, ЖЖ на каждый просмотр не дёргается.
@@ -52,7 +55,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (декод сущностей, HTML→текст), `rss.ts` (посты+тело), `comments.ts` (RPC),
   `scrape.ts` (оркестратор + upsert в БД + наполнение FTS).
 - `server/api/` — Nitro routes: `scrape.post.ts`, `posts.get.ts`,
-  `posts/[id].get.ts`, `search.get.ts`.
+  `posts/[id].get.ts` (мета + счётчик комментов),
+  `posts/[id]/comments.get.ts?page=N` (страница комментов + `totalPages`),
+  `search.get.ts` (для комментов вычисляет страницу пагинации → ссылка `?page=N#c<id>`).
+- **Пагинация комментов из БД:** ветка со всеми ответами лежит в pre-order
+  сплошным блоком по `position`, поэтому страница = диапазон позиций между началами
+  N-й и (N+1)-й верхнеуровневых веток (без пересборки дерева на сервере).
 - `app/` — фронт (Nuxt srcDir): `pages/index.vue`, `pages/posts/[id].vue`,
   `components/CommentTree.vue` (рекурсивное дерево комментов из плоского списка).
 

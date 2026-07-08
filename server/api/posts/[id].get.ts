@@ -9,7 +9,8 @@ interface PostRow {
   bodyHtml: string
 }
 
-// GET /api/posts/:id — пост + плоский список его комментариев.
+// GET /api/posts/:id — мета поста + число комментариев.
+// Сами комментарии отдаёт постранично /api/posts/:id/comments.
 export default defineEventHandler((event) => {
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'Некорректный id' })
@@ -24,16 +25,12 @@ export default defineEventHandler((event) => {
 
   if (!post) throw createError({ statusCode: 404, statusMessage: 'Пост не найден' })
 
-  const comments = db
-    .prepare(
-      `SELECT id, parent_id AS parentId, level, author, author_journal AS authorJournal,
-              body_html AS bodyHtml, created_at AS createdAt
-       FROM comments WHERE post_id = ? ORDER BY position`,
-    )
-    .all(id)
+  const { n } = db
+    .prepare('SELECT COUNT(*) AS n FROM comments WHERE post_id = ?')
+    .get(id) as { n: number }
 
   return {
     post: { ...post, tags: JSON.parse(post.tags) as string[] },
-    comments,
+    commentCount: n,
   }
 })

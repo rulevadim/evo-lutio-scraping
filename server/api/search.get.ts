@@ -1,4 +1,5 @@
 import { useDb } from '~~/server/db'
+import { COMMENTS_PAGE_SIZE } from '~~/server/utils/pagination'
 
 interface SearchRow {
   kind: 'post' | 'comment'
@@ -41,14 +42,29 @@ export default defineEventHandler((event) => {
     for (const t of titles) titleOf.set(t.id, t.title)
   }
 
+  // Для комментария вычисляем страницу пагинации, чтобы ссылка вела сразу туда.
+  const posStmt = db.prepare('SELECT post_id AS postId, position FROM comments WHERE id = ?')
+  const rankStmt = db.prepare(
+    'SELECT COUNT(*) AS n FROM comments WHERE post_id = ? AND parent_id = 0 AND position <= ?',
+  )
+  const commentPage = (commentId: number): number => {
+    const pos = posStmt.get(commentId) as { postId: number; position: number } | undefined
+    if (!pos) return 1
+    const { n } = rankStmt.get(pos.postId, pos.position) as { n: number }
+    return Math.max(1, Math.ceil(n / COMMENTS_PAGE_SIZE))
+  }
+
   const results = rows.map((r) => ({
     kind: r.kind,
     postId: r.postId,
     postTitle: titleOf.get(r.postId) ?? '',
     author: r.author,
     snippet: r.snippet,
-    // якорь к комментарию на странице поста
-    href: r.kind === 'comment' ? `/posts/${r.postId}#c${r.refId}` : `/posts/${r.postId}`,
+    // якорь к комментарию на нужной странице пагинации
+    href:
+      r.kind === 'comment'
+        ? `/posts/${r.postId}?page=${commentPage(r.refId)}#c${r.refId}`
+        : `/posts/${r.postId}`,
   }))
 
   return { query: q, results }

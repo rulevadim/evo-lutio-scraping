@@ -1,4 +1,5 @@
-import { LJ_BASE, LJ_JOURNAL, ljGet } from './client'
+import { COMMENTS_PAGE_SIZE } from '../pagination'
+import { LJ_BASE, LJ_JOURNAL, ljGet, sleep } from './client'
 
 export interface LjComment {
   id: number // dtalkid
@@ -8,7 +9,7 @@ export interface LjComment {
   authorJournal: string // URL журнала автора
   bodyHtml: string
   createdAt: number // unix seconds
-  position: number // порядок в выдаче RPC (threaded pre-order)
+  position: number // сквозной порядок в threaded pre-order по всем страницам
   deleted: boolean
 }
 
@@ -24,27 +25,57 @@ interface RpcComment {
   deleted?: number
 }
 
-/**
- * Комментарии поста через JSON-RPC `__rpc_get_thread`.
- * Берём только первую страницу (топ-N веток) — этого достаточно для читалки и
- * поиска, а полная пагинация на активных постах Эволюции — это тысячи запросов.
- * Массив приходит в threaded pre-order; `parent` = dtalkid родителя.
- */
-export async function fetchComments(ditemid: number): Promise<LjComment[]> {
-  const url = `${LJ_BASE}/__rpc_get_thread?journal=${LJ_JOURNAL}&itemid=${ditemid}&flat=&expand_all=1`
-  const raw = JSON.parse(await ljGet(url, { rpc: true })) as { comments?: RpcComment[] }
+interface RpcResponse {
+  comments?: RpcComment[]
+  replycount?: number
+}
 
-  return (raw.comments ?? [])
-    .filter((c): c is RpcComment & { dtalkid: number } => Boolean(c?.dtalkid))
-    .map((c, i) => ({
-      id: Number(c.dtalkid),
-      parentId: Number(c.parent) || 0,
-      level: Number(c.level) || 0,
-      author: String(c.dname ?? c.uname ?? ''),
-      authorJournal: String(c.commenter_journal_base ?? ''),
-      bodyHtml: String(c.article ?? ''),
-      createdAt: Number(c.ctime_ts) || 0,
-      position: i,
-      deleted: Boolean(c.deleted),
-    }))
+function mapComment(c: RpcComment, position: number): LjComment {
+  return {
+    id: Number(c.dtalkid),
+    parentId: Number(c.parent) || 0,
+    level: Number(c.level) || 0,
+    author: String(c.dname ?? c.uname ?? ''),
+    authorJournal: String(c.commenter_journal_base ?? ''),
+    bodyHtml: String(c.article ?? ''),
+    createdAt: Number(c.ctime_ts) || 0,
+    position,
+    deleted: Boolean(c.deleted),
+  }
+}
+
+/**
+ * Все комментарии поста через JSON-RPC `__rpc_get_thread` с пагинацией.
+ * ЖЖ отдаёт по {@link COMMENTS_PAGE_SIZE} верхнеуровневых веток на страницу
+ * (вложенные ответы — целиком внутри своей ветки). Идём по `page=1,2,…`, пока не
+ * наберём `replycount` или страница не окажется неполной. `maxPages` — предохранитель
+ * от слишком активных постов. Массив приходит в threaded pre-order; ветки между
+ * страницами не пересекаются, поэтому `position` монотонно растёт сквозь страницы.
+ */
+export async function fetchAllComments(
+  ditemid: number,
+  opts: { maxPages?: number } = {},
+): Promise<LjComment[]> {
+  const maxPages = opts.maxPages ?? 60
+  const all: LjComment[] = []
+  let replycount = Number.POSITIVE_INFINITY
+
+  for (let page = 1; page <= maxPages; page++) {
+    const url = `${LJ_BASE}/__rpc_get_thread?journal=${LJ_JOURNAL}&itemid=${ditemid}&flat=&expand_all=1&page=${page}`
+    const data = JSON.parse(await ljGet(url, { rpc: true })) as RpcResponse
+
+    if (typeof data.replycount === 'number') replycount = data.replycount
+    const batch = (data.comments ?? []).filter((c) => Boolean(c?.dtalkid))
+    if (batch.length === 0) break
+
+    for (const c of batch) all.push(mapComment(c, all.length))
+
+    const topLevelInBatch = batch.filter((c) => Number(c.level) === 1).length
+    // Достигли конца: набрали всё либо страница неполная (последняя).
+    if (all.length >= replycount || topLevelInBatch < COMMENTS_PAGE_SIZE) break
+
+    await sleep(400) // вежливая пауза между страницами
+  }
+
+  return all
 }
