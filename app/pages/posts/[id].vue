@@ -119,6 +119,8 @@ function centerOn(el: HTMLElement): void {
 function highlightFromSearch() {
   if (!import.meta.client) return
   const q = String(route.query.q ?? '')
+  // Обычное открытие поста (без запроса и без якоря) — ничего не скроллим, верх страницы.
+  if (!q && !route.hash) return
 
   requestAnimationFrame(() => {
     // Целевой контейнер: тело нужного комментария (по #c…) либо тело поста.
@@ -129,8 +131,9 @@ function highlightFromSearch() {
     if (!container) return
 
     const first = q ? markWords(container, q) : null
-    const scrollTarget =
-      first ?? (route.hash ? document.querySelector<HTMLElement>(route.hash) : container)
+    // Скроллим только если есть к чему: найденное слово или комментарий-якорь.
+    const hashEl = route.hash ? document.querySelector<HTMLElement>(route.hash) : null
+    const scrollTarget = first ?? hashEl
     if (!scrollTarget) return
 
     centerOn(scrollTarget)
