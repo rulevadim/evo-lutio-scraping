@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+/* Оформление контента из v-html (тело поста и комментарии ЖЖ). */
+.rich :where(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  margin: 0.5rem 0;
+}
+.rich :where(a) {
+  color: #2563eb;
+  text-decoration: underline;
+}
+.rich :where(p) {
+  margin: 0.75rem 0;
+}
+.rich :where(blockquote) {
+  margin: 0.75rem 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid #d4d4d4;
+  color: #525252;
+}
