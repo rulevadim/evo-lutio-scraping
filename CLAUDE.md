@@ -68,6 +68,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   N-й и (N+1)-й верхнеуровневых веток (без пересборки дерева на сервере).
 - `app/` — фронт (Nuxt srcDir): `pages/index.vue`, `pages/posts/[id].vue`,
   `components/CommentTree.vue` (рекурсивное дерево комментов из плоского списка).
+- **Размеры картинок (против layout shift):** контент-картинки ЖЖ приходят без
+  `width`/`height`. `server/utils/lj/images.ts` (`reserveImgSpace`) при запросе
+  read-эндпоинтов (`posts/[id]` и `.../comments`) добывает размеры через Range-запрос
+  заголовка (`image-size`) и вписывает `width`/`height` + `loading="lazy"` в HTML.
+  Пробинг — на сервере (браузеру мешает CORS), кэш **в памяти** процесса (не в БД,
+  не в скрейпе); первый просмотр поста пробивает картинки, дальше из кэша. Иконки
+  `<lj user>` не пробятся — их размер задаёт CSS (`.i-ljuser-userhead`).
 
 Важно про структуру Nuxt 4: `srcDir` = `app/` (алиасы `~`/`@` указывают туда),
 а `server/` лежит в **корне** проекта, не внутри `app/`.

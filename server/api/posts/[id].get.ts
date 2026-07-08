@@ -1,4 +1,5 @@
 import { useDb } from '~~/server/db'
+import { reserveImgSpace } from '~~/server/utils/lj/images'
 
 interface PostRow {
   id: number
@@ -11,7 +12,7 @@ interface PostRow {
 
 // GET /api/posts/:id — мета поста + число комментариев.
 // Сами комментарии отдаёт постранично /api/posts/:id/comments.
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'Некорректный id' })
 
@@ -30,7 +31,11 @@ export default defineEventHandler((event) => {
     .get(id) as { n: number }
 
   return {
-    post: { ...post, tags: JSON.parse(post.tags) as string[] },
+    post: {
+      ...post,
+      tags: JSON.parse(post.tags) as string[],
+      bodyHtml: await reserveImgSpace(post.bodyHtml),
+    },
     commentCount: n,
   }
 })

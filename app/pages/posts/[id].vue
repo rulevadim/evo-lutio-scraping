@@ -113,25 +113,9 @@ function centerOn(el: HTMLElement): void {
   window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
 }
 
-// Дождаться загрузки картинок в области (иначе лейаут сдвинется после скролла).
-function waitForImages(scope: ParentNode, timeoutMs = 1500): Promise<void> {
-  const imgs = [...scope.querySelectorAll('img')].filter((im) => !im.complete)
-  if (!imgs.length) return Promise.resolve()
-  return Promise.race([
-    Promise.all(
-      imgs.map(
-        (im) =>
-          new Promise<void>((res) => {
-            im.addEventListener('load', () => res(), { once: true })
-            im.addEventListener('error', () => res(), { once: true })
-          }),
-      ),
-    ).then(() => undefined),
-    new Promise<void>((res) => setTimeout(res, timeoutMs)),
-  ])
-}
-
 // Переход из поиска: подсветить слово(а) из ?q= и прокрутить к первому совпадению.
+// Место под картинки уже зарезервировано сервером (width/height в HTML), поэтому
+// лейаут стабилен — центрируем и подсвечиваем сразу, картинок не ждём.
 function highlightFromSearch() {
   if (!import.meta.client) return
   const q = String(route.query.q ?? '')
@@ -149,11 +133,7 @@ function highlightFromSearch() {
       first ?? (route.hash ? document.querySelector<HTMLElement>(route.hash) : container)
     if (!scrollTarget) return
 
-    // Центрируем сразу и ещё раз после загрузки картинок поста (лейаут сдвигается).
     centerOn(scrollTarget)
-    void waitForImages(document.querySelector('article') ?? document.body).then(() =>
-      centerOn(scrollTarget),
-    )
 
     if (first) {
       setTimeout(() => {
