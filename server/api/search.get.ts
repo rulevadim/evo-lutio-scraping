@@ -54,17 +54,18 @@ export default defineEventHandler((event) => {
     return Math.max(1, Math.ceil(n / COMMENTS_PAGE_SIZE))
   }
 
+  const enc = encodeURIComponent(q)
   const results = rows.map((r) => ({
     kind: r.kind,
     postId: r.postId,
     postTitle: titleOf.get(r.postId) ?? '',
     author: r.author,
     snippet: r.snippet,
-    // якорь к комментарию на нужной странице пагинации
+    // якорь к комментарию на нужной странице пагинации + запрос для подсветки слова
     href:
       r.kind === 'comment'
-        ? `/posts/${r.postId}?page=${commentPage(r.refId)}#c${r.refId}`
-        : `/posts/${r.postId}`,
+        ? `/posts/${r.postId}?page=${commentPage(r.refId)}&q=${enc}#c${r.refId}`
+        : `/posts/${r.postId}?q=${enc}`,
   }))
 
   return { query: q, results }

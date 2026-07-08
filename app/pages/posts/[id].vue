@@ -55,19 +55,85 @@ watch(page, (p) => {
   }
 })
 
-// Переход из поиска: подсветить и прокрутить к конкретному комментарию.
-function highlightHash() {
-  if (!import.meta.client || !route.hash) return
+const HIGHLIGHT_MS = 5000
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// Обернуть целые слова из запроса в <mark> внутри контейнера. Возвращает первый <mark>.
+function markWords(container: HTMLElement, query: string): HTMLElement | null {
+  const words = query.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 2)
+  if (!words.length) return null
+  // Границы слова через \p{L}\p{N} (JS \b не дружит с кириллицей).
+  const re = new RegExp(
+    `(?<![\\p{L}\\p{N}])(${words.map(escapeRegExp).join('|')})(?![\\p{L}\\p{N}])`,
+    'giu',
+  )
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+  const nodes: Text[] = []
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    re.lastIndex = 0
+    if (n.nodeValue && re.test(n.nodeValue)) nodes.push(n as Text)
+  }
+
+  let first: HTMLElement | null = null
+  for (const node of nodes) {
+    const text = node.nodeValue!
+    const frag = document.createDocumentFragment()
+    let last = 0
+    re.lastIndex = 0
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)))
+      const mark = document.createElement('mark')
+      mark.className = 'search-hit'
+      mark.textContent = m[0]
+      frag.appendChild(mark)
+      if (!first) first = mark
+      last = m.index + m[0].length
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)))
+    node.parentNode?.replaceChild(frag, node)
+  }
+  return first
+}
+
+function unmark(container: HTMLElement): void {
+  container.querySelectorAll('mark.search-hit').forEach((m) => {
+    m.replaceWith(document.createTextNode(m.textContent ?? ''))
+  })
+  container.normalize()
+}
+
+// Переход из поиска: подсветить слово(а) из ?q= и прокрутить к первому совпадению.
+function highlightFromSearch() {
+  if (!import.meta.client) return
+  const q = String(route.query.q ?? '')
+
   requestAnimationFrame(() => {
-    const el = document.querySelector<HTMLElement>(route.hash)
-    if (!el) return
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    el.classList.add('ring-2', 'ring-amber-400')
-    setTimeout(() => el.classList.remove('ring-2', 'ring-amber-400'), 2200)
+    // Целевой контейнер: тело нужного комментария (по #c…) либо тело поста.
+    const container = route.hash
+      ? (document.querySelector<HTMLElement>(`${route.hash} .rich`) ??
+        document.querySelector<HTMLElement>(route.hash))
+      : document.getElementById('post-body')
+    if (!container) return
+
+    const first = q ? markWords(container, q) : null
+    const scrollTarget =
+      first ?? (route.hash ? document.querySelector<HTMLElement>(route.hash) : container)
+    scrollTarget?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+    if (first) {
+      setTimeout(() => {
+        container.querySelectorAll('mark.search-hit').forEach((m) => m.classList.add('fade'))
+        setTimeout(() => unmark(container), 500)
+      }, HIGHLIGHT_MS)
+    }
   })
 }
 
-onMounted(highlightHash)
+onMounted(highlightFromSearch)
 
 useHead(() => ({ title: meta.value?.post.title ?? 'Пост' }))
 </script>
@@ -91,7 +157,7 @@ useHead(() => ({ title: meta.value?.post.title ?? 'Пост' }))
         </div>
       </header>
 
-      <div class="rich text-[1.05rem] leading-relaxed text-neutral-900" v-html="meta.post.bodyHtml" />
+      <div id="post-body" class="rich text-[1.05rem] leading-relaxed text-neutral-900" v-html="meta.post.bodyHtml" />
 
       <section ref="commentsSection" class="mt-10 scroll-mt-20">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">

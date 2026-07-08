@@ -26,8 +26,8 @@ CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
 CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(post_id, parent_id);
 
 -- Единый полнотекстовый индекс по постам и комментариям.
--- Токенайзер trigram → поиск по подстрокам, работает для русского без стеммера.
--- Метаданные (kind/post_id/ref_id) не токенизируются.
+-- Токенайзер unicode61 → пословный поиск (целые слова, не подстроки), unicode-aware
+-- (корректно бьёт кириллицу). Метаданные (kind/post_id/ref_id) не токенизируются.
 CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
   kind    UNINDEXED,  -- 'post' | 'comment'
   post_id UNINDEXED,  -- id поста, к которому относится запись
@@ -35,5 +35,5 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
   title,              -- заголовок поста (у комментов пусто)
   author,             -- автор коммента (у поста пусто)
   content,            -- основной текст, очищенный от HTML
-  tokenize = 'trigram'
+  tokenize = 'unicode61 remove_diacritics 2'
 );

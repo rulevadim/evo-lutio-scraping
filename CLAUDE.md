@@ -48,9 +48,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `server/db/` — SQLite через `better-sqlite3` (синхронный). `index.ts` —
   singleton-подключение, при старте применяет `schema.sql` (idempotent). Файл БД —
   `.data/blog.db` (в `.gitignore`).
-- **Поиск** — таблица FTS5 `search` с токенайзером `trigram` (поиск по подстрокам,
-  работает для русского без стеммера). Наполняется из `posts` и `comments` при
-  скрейпинге; запрос — `... WHERE search MATCH ? ORDER BY bm25(search)`.
+- **Поиск** — таблица FTS5 `search` с токенайзером `unicode61` (пословный поиск:
+  целые слова, не подстроки; unicode-aware для кириллицы; без стеммера — формы
+  слова не склеиваются). Наполняется из `posts`/`comments` при скрейпинге; запрос —
+  `... WHERE search MATCH ? ORDER BY bm25(search)` (запрос оборачивается в фразу).
+  `search.get.ts` кладёт в ссылку результата `&q=<слово>` для подсветки на странице.
+  Смена токенайзера мигрируется автоматически: `useDb()` при старте видит старый
+  trigram-индекс, дропает и пересобирает `search` из `posts`/`comments`
+  (`rebuildSearchIndex`) — без обращения к ЖЖ.
 - `server/utils/lj/` — скрейпер: `client.ts` (fetch+UA+паузы), `text.ts`
   (декод сущностей, HTML→текст), `rss.ts` (посты+тело), `comments.ts` (RPC),
   `scrape.ts` (оркестратор + upsert в БД + наполнение FTS).

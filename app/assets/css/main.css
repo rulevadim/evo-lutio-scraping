@@ -20,3 +20,15 @@
   border-left: 3px solid #d4d4d4;
   color: #525252;
 }
+
+/* Временная подсветка найденного слова при переходе из поиска. */
+mark.search-hit {
+  background: #fde68a;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+  transition: background-color 0.5s ease;
+}
+mark.search-hit.fade {
+  background: transparent;
+}
