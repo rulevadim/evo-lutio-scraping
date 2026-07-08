@@ -49,7 +49,7 @@ watch(cdata, (d) => {
 
 // Смена страницы: обновляем URL и прокручиваем к началу комментариев.
 watch(page, (p) => {
-  router.replace({ query: { ...route.query, page: p }, hash: '' })
+  router.replace({ query: { ...route.query, page: p, q: undefined }, hash: '' })
   if (import.meta.client) {
     requestAnimationFrame(() => commentsSection.value?.scrollIntoView({ behavior: 'smooth' }))
   }
@@ -106,6 +106,31 @@ function unmark(container: HTMLElement): void {
   container.normalize()
 }
 
+// Прокрутить так, чтобы элемент оказался по центру экрана по вертикали.
+function centerOn(el: HTMLElement): void {
+  const rect = el.getBoundingClientRect()
+  const top = window.scrollY + rect.top - window.innerHeight / 2 + rect.height / 2
+  window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+}
+
+// Дождаться загрузки картинок в области (иначе лейаут сдвинется после скролла).
+function waitForImages(scope: ParentNode, timeoutMs = 1500): Promise<void> {
+  const imgs = [...scope.querySelectorAll('img')].filter((im) => !im.complete)
+  if (!imgs.length) return Promise.resolve()
+  return Promise.race([
+    Promise.all(
+      imgs.map(
+        (im) =>
+          new Promise<void>((res) => {
+            im.addEventListener('load', () => res(), { once: true })
+            im.addEventListener('error', () => res(), { once: true })
+          }),
+      ),
+    ).then(() => undefined),
+    new Promise<void>((res) => setTimeout(res, timeoutMs)),
+  ])
+}
+
 // Переход из поиска: подсветить слово(а) из ?q= и прокрутить к первому совпадению.
 function highlightFromSearch() {
   if (!import.meta.client) return
@@ -122,7 +147,13 @@ function highlightFromSearch() {
     const first = q ? markWords(container, q) : null
     const scrollTarget =
       first ?? (route.hash ? document.querySelector<HTMLElement>(route.hash) : container)
-    scrollTarget?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (!scrollTarget) return
+
+    // Центрируем сразу и ещё раз после загрузки картинок поста (лейаут сдвигается).
+    centerOn(scrollTarget)
+    void waitForImages(document.querySelector('article') ?? document.body).then(() =>
+      centerOn(scrollTarget),
+    )
 
     if (first) {
       setTimeout(() => {
