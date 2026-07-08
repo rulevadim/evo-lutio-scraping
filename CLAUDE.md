@@ -67,6 +67,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Важно про структуру Nuxt 4: `srcDir` = `app/` (алиасы `~`/`@` указывают туда),
 а `server/` лежит в **корне** проекта, не внутри `app/`.
 
+## Наблюдение за запросами
+
+- **Слой `/api/*`** (браузер → наш сервер): browser DevTools → Network, либо Nuxt
+  DevTools (`Shift+Option+D` → вкладка Server Routes).
+- **Исходящие к ЖЖ** (наш сервер → LiveJournal, т.е. сам скрейпинг) — не видны в
+  браузере. Плагин `server/plugins/http-observability.ts` (Nitro) даёт два режима
+  через env:
+  - `HTTP_DEBUG=1 pnpm dev` (или `pnpm dev:debug`) — лог каждого fetch в терминал
+    (`[http →] …` / `[http ←] статус …`) через `node:diagnostics_channel` (каналы undici).
+  - `HTTPS_PROXY=http://127.0.0.1:9090 pnpm dev` — прогон трафика через
+    **Proxyman/mitmproxy** (Node'овый fetch не уважает `HTTP_PROXY` сам, поэтому
+    ставим `ProxyAgent` из undici через `setGlobalDispatcher`). Для TLS-перехвата
+    Proxyman нужно доверять его CA: `NODE_EXTRA_CA_CERTS=<proxyman-ca.pem>`, либо
+    быстрый дев-обход `HTTP_PROXY_INSECURE=1` (без проверки TLS).
+
+Важно: `undici` закреплён на `^6` — 8.x несовместим с Node 20 (падает
+`webidl.util.markAsUncloneable is not a function`).
+
 ## Стили
 
 Два движка утилит подключены одновременно — это намеренно:
