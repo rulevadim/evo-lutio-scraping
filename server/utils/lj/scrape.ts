@@ -4,6 +4,7 @@ import { fetchPostByItemid } from './atomItem'
 import { sleep } from './client'
 import type { LjComment } from './comments'
 import { fetchAllComments } from './comments'
+import { reserveImgSpace } from './images'
 import type { RssPost } from './rss'
 import { fetchRecentPosts } from './rss'
 import { htmlToText } from './text'
@@ -93,6 +94,21 @@ function createPersister(db: Db) {
 type Persister = ReturnType<typeof createPersister>
 
 /**
+ * Пробить размеры контент-картинок и вписать их (width/height + lazy) в HTML поста
+ * и комментариев, затем persist. Пробинг делаем здесь, на скрейпе (async), чтобы в
+ * БД лёг уже готовый HTML — read-эндпоинты ЖЖ на просмотр не дёргают. Возвращает
+ * число комментариев.
+ */
+async function savePost(persist: Persister, post: RssPost, comments: LjComment[]): Promise<number> {
+  const bodyHtml = await reserveImgSpace(post.bodyHtml)
+  const baked = await Promise.all(
+    comments.map(async (c) => ({ ...c, bodyHtml: await reserveImgSpace(c.bodyHtml) })),
+  )
+  persist({ ...post, bodyHtml }, baked)
+  return comments.length
+}
+
+/**
  * По списку `ditemid`: тело из Atom + все комментарии → persist. Общий «хвост»
  * дозагрузки для {@link scrapeOlder} и {@link scrapeNewer}.
  */
@@ -101,8 +117,7 @@ async function persistDitemids(persist: Persister, ids: number[]): Promise<Scrap
   for (const id of ids) {
     const post = await fetchPostByItemid(id)
     const comments = await fetchAllComments(id)
-    persist(post, comments)
-    commentCount += comments.length
+    commentCount += await savePost(persist, post, comments)
     await sleep(600) // вежливая пауза между постами
   }
   return { posts: ids.length, comments: commentCount }
@@ -121,8 +136,7 @@ export async function scrape(limit = 10): Promise<ScrapeResult> {
 
   for (const post of posts) {
     const comments = await fetchAllComments(post.id)
-    persist(post, comments)
-    commentCount += comments.length
+    commentCount += await savePost(persist, post, comments)
     await sleep(600) // вежливая пауза между постами
   }
 

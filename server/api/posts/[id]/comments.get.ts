@@ -1,5 +1,4 @@
 import { useDb } from '~~/server/db'
-import { reserveImgSpace } from '~~/server/utils/lj/images'
 import { COMMENTS_PAGE_SIZE } from '~~/server/utils/pagination'
 
 interface CommentRow {
@@ -16,7 +15,8 @@ interface CommentRow {
 // Пагинация по верхнеуровневым веткам (COMMENTS_PAGE_SIZE на страницу), как на сайте.
 // Ветка со всеми вложенными ответами идёт в pre-order сплошным блоком по `position`,
 // поэтому страницу выбираем диапазоном позиций между началами N-й и (N+1)-й веток.
-export default defineEventHandler(async (event) => {
+// Размеры картинок уже вписаны в body_html на скрейпе — тут ничего не пробим.
+export default defineEventHandler((event) => {
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'Некорректный id' })
 
@@ -45,13 +45,6 @@ export default defineEventHandler(async (event) => {
          ORDER BY position`,
       )
       .all(id, startPos, endPos) as CommentRow[]
-
-    // Резервируем место под картинки в комментах (у большинства их нет — дёшево).
-    await Promise.all(
-      comments.map(async (c) => {
-        c.bodyHtml = await reserveImgSpace(c.bodyHtml)
-      }),
-    )
   }
 
   return { page, totalPages, totalTop: tops.length, comments }
