@@ -14,6 +14,15 @@ export interface ScrapeResult {
   comments: number
 }
 
+/**
+ * Колбэки прогресса для стриминга наружу: `onStart` — когда известно, сколько
+ * постов будет сохранено; `onProgress` — после каждого сохранённого поста.
+ */
+export interface ProgressOpts {
+  onStart?: (total: number) => void
+  onProgress?: (done: number, total: number) => void
+}
+
 type Db = ReturnType<typeof useDb>
 
 /**
@@ -112,12 +121,18 @@ async function savePost(persist: Persister, post: RssPost, comments: LjComment[]
  * По списку `ditemid`: тело из Atom + все комментарии → persist. Общий «хвост»
  * дозагрузки для {@link scrapeOlder} и {@link scrapeNewer}.
  */
-async function persistDitemids(persist: Persister, ids: number[]): Promise<ScrapeResult> {
+async function persistDitemids(
+  persist: Persister,
+  ids: number[],
+  progress: ProgressOpts = {},
+): Promise<ScrapeResult> {
+  progress.onStart?.(ids.length)
   let commentCount = 0
-  for (const id of ids) {
-    const post = await fetchPostByItemid(id)
-    const comments = await fetchAllComments(id)
+  for (let i = 0; i < ids.length; i++) {
+    const post = await fetchPostByItemid(ids[i]!)
+    const comments = await fetchAllComments(ids[i]!)
     commentCount += await savePost(persist, post, comments)
+    progress.onProgress?.(i + 1, ids.length)
     await sleep(600) // вежливая пауза между постами
   }
   return { posts: ids.length, comments: commentCount }
@@ -127,16 +142,18 @@ async function persistDitemids(persist: Persister, ids: number[]): Promise<Scrap
  * Оркестратор скрейпинга: RSS → по каждому посту тянем комментарии → upsert в БД
  * и пере-наполнение полнотекстового индекса. Идемпотентно (перезапись по id).
  */
-export async function scrape(limit = 10): Promise<ScrapeResult> {
+export async function scrape(limit = 10, progress: ProgressOpts = {}): Promise<ScrapeResult> {
   const db = useDb()
   const persist = createPersister(db)
 
   const posts = await fetchRecentPosts(limit)
+  progress.onStart?.(posts.length)
   let commentCount = 0
 
-  for (const post of posts) {
-    const comments = await fetchAllComments(post.id)
-    commentCount += await savePost(persist, post, comments)
+  for (let i = 0; i < posts.length; i++) {
+    const comments = await fetchAllComments(posts[i]!.id)
+    commentCount += await savePost(persist, posts[i]!, comments)
+    progress.onProgress?.(i + 1, posts.length)
     await sleep(600) // вежливая пауза между постами
   }
 
@@ -154,7 +171,7 @@ export async function scrape(limit = 10): Promise<ScrapeResult> {
  */
 export async function scrapeOlder(
   count = 10,
-  opts: { maxMonths?: number } = {},
+  opts: { maxMonths?: number } & ProgressOpts = {},
 ): Promise<ScrapeResult> {
   const db = useDb()
   const persist = createPersister(db)
@@ -199,7 +216,7 @@ export async function scrapeOlder(
     if (picked.length < count) await sleep(600) // вежливая пауза между запросами месяцев
   }
 
-  return await persistDitemids(persist, picked)
+  return await persistDitemids(persist, picked, opts)
 }
 
 /**
@@ -212,7 +229,7 @@ export async function scrapeOlder(
  */
 export async function scrapeNewer(
   count = 10,
-  opts: { maxMonths?: number } = {},
+  opts: { maxMonths?: number } & ProgressOpts = {},
 ): Promise<ScrapeResult> {
   const db = useDb()
   const persist = createPersister(db)
@@ -262,5 +279,5 @@ export async function scrapeNewer(
     if (picked.length < count) await sleep(600) // вежливая пауза между запросами месяцев
   }
 
-  return await persistDitemids(persist, picked)
+  return await persistDitemids(persist, picked, opts)
 }

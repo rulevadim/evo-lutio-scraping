@@ -81,9 +81,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (`fetchYearMonths`, по ссылкам-дням), `/YYYY/MM/` → `ditemid` месяца; уникальные
   id в общий Set. ~150 запросов (последовательно, с паузами), поэтому — **по кнопке**
   и с кэшем в `meta` (`blog_total` + `blog_total_at`), не на каждый просмотр.
-- `server/api/` — Nitro routes: `scrape.post.ts` (свежий хвост, `{ limit? }`),
-  `scrape/more.post.ts` (дозагрузка старых, `{ count? }` → `scrapeOlder`),
-  `scrape/newer.post.ts` (дозагрузка новых, `{ count? }` → `scrapeNewer`),
+- **Прогресс скрейпа (стриминг):** эндпоинты скрейпа отдают не разовый JSON, а
+  поток **NDJSON** (`server/utils/stream.ts`): `{type:'start',total}` → на каждый
+  сохранённый пост `{type:'progress',done,total}` → `{type:'done',posts,comments}`
+  (ошибка — `{type:'error',message}`). Наружу это идёт через `ProgressOpts`
+  (`onStart`/`onProgress`) в `scrape`/`scrapeOlder`/`scrapeNewer`. Фронт
+  (`index.vue`) читает поток `fetch`-ридером и рисует полосу «done/total».
+- `server/api/` — Nitro routes: `scrape.post.ts` (свежий хвост, `{ limit? }` 1..25),
+  `scrape/more.post.ts` (дозагрузка старых, `{ count? }` **1..100** → `scrapeOlder`),
+  `scrape/newer.post.ts` (дозагрузка новых, `{ count? }` 1..100 → `scrapeNewer`),
   `blog-stats.get.ts` (сохранено + кэш общего числа) / `blog-stats.post.ts`
   (пересчёт `countBlogPosts` → кэш в `meta`),
   `posts.get.ts?page=N` (страница списка постов, 10 на страницу, ответ
