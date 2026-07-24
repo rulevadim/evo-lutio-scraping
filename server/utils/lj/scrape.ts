@@ -166,8 +166,9 @@ export async function scrape(limit = 10, progress: ProgressOpts = {}): Promise<S
  * месяцами назад от месяца самого старого поста (при пустой БД — от текущего),
  * и **отбрасываем уже сохранённые id** — поэтому добор идёт строго вглубь без
  * пропусков и без затирания имеющихся записей. Тело каждого поста — из Atom по
- * itemid, комментарии — как обычно. `maxMonths` — предохранитель от ухода за
- * начало журнала.
+ * itemid, комментарии — как обычно. Обход прекращается, когда набрали `count`,
+ * либо после года подряд пустых месяцев (значит, дошли до начала журнала);
+ * `maxMonths` — жёсткий предохранитель сверху.
  */
 export async function scrapeOlder(
   count = 10,
@@ -175,7 +176,7 @@ export async function scrapeOlder(
 ): Promise<ScrapeResult> {
   const db = useDb()
   const persist = createPersister(db)
-  const maxMonths = opts.maxMonths ?? 24
+  const maxMonths = opts.maxMonths ?? 300
 
   const existing = new Set<number>(
     (db.prepare('SELECT id FROM posts').all() as { id: number }[]).map((r) => r.id),
@@ -191,6 +192,7 @@ export async function scrapeOlder(
 
   // Собираем до `count` новых ditemid, идя месяцами назад.
   const picked: number[] = []
+  let emptyStreak = 0 // подряд идущие пустые месяцы → добрались до начала журнала
   for (let i = 0; i < maxMonths && picked.length < count; i++) {
     let ids: number[] = []
     try {
@@ -199,6 +201,9 @@ export async function scrapeOlder(
       // Пустой/недоступный месяц архива не должен ронять весь батч — пропускаем.
       console.warn(`[scrapeOlder] пропуск ${year}/${month}:`, (err as Error).message)
     }
+    emptyStreak = ids.length === 0 ? emptyStreak + 1 : 0
+    if (emptyStreak >= 12) break // год пустых месяцев подряд — постов старше уже нет
+
     for (const id of ids) {
       if (picked.length >= count) break
       if (!existing.has(id)) {
@@ -233,7 +238,7 @@ export async function scrapeNewer(
 ): Promise<ScrapeResult> {
   const db = useDb()
   const persist = createPersister(db)
-  const maxMonths = opts.maxMonths ?? 24
+  const maxMonths = opts.maxMonths ?? 300
 
   const existing = new Set<number>(
     (db.prepare('SELECT id FROM posts').all() as { id: number }[]).map((r) => r.id),

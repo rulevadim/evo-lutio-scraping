@@ -92,8 +92,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (`onStart`/`onProgress`) в `scrape`/`scrapeOlder`/`scrapeNewer`. Фронт
   (`index.vue`) читает поток `fetch`-ридером и рисует полосу «done/total».
 - `server/api/` — Nitro routes: `scrape.post.ts` (свежий хвост, `{ limit? }` 1..25),
-  `scrape/more.post.ts` (дозагрузка старых, `{ count? }` **1..100** → `scrapeOlder`),
-  `scrape/newer.post.ts` (дозагрузка новых, `{ count? }` 1..100 → `scrapeNewer`),
+  `scrape/more.post.ts` (дозагрузка старых, `{ count? }` ≥1 без потолка → `scrapeOlder`),
+  `scrape/newer.post.ts` (дозагрузка новых, `{ count? }` ≥1 без потолка → `scrapeNewer`),
   `blog-stats.get.ts` (сохранено + кэш общего числа) / `blog-stats.post.ts`
   (пересчёт `countBlogPosts` → кэш в `meta`),
   `posts.get.ts?page=N` (страница списка постов, 10 на страницу, ответ

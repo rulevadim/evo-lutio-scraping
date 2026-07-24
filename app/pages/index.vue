@@ -83,7 +83,7 @@ watch(sort, () => {
 const scraping = ref(false)
 const scrapeMsg = ref('')
 const progress = ref<{ done: number; total: number } | null>(null)
-const oldCount = ref(20) // выбранное число для «Загрузить старые» (1..100)
+const oldCount = ref(20) // выбранное число для «Загрузить старые» (≥1, без потолка)
 const blogStats = useBlogStats()
 
 interface ScrapeEvent {
@@ -160,7 +160,7 @@ const loadMore = () =>
   )
 
 const loadOld = () => {
-  const count = Math.min(Math.max(Math.trunc(oldCount.value) || 1, 1), 100)
+  const count = Math.max(Math.trunc(oldCount.value) || 1, 1)
   oldCount.value = count
   return runScrape('/api/scrape/more', { count }, (n) =>
     n ? `Добавлено ${n} старых постов (они в конце списка).` : 'Новых старых постов не найдено.',
@@ -299,9 +299,8 @@ function fmtDate(ts: number): string {
                 v-model.number="oldCount"
                 type="number"
                 min="1"
-                max="100"
                 :disabled="scraping"
-                class="w-14 rounded border border-neutral-200 px-2 py-1 text-center text-sm tabular-nums outline-none focus:border-neutral-400 disabled:opacity-50"
+                class="w-16 rounded border border-neutral-200 px-2 py-1 text-center text-sm tabular-nums outline-none focus:border-neutral-400 disabled:opacity-50"
                 @keydown.enter="loadOld"
               >
               <button

@@ -5,7 +5,7 @@ import { streamNdjson } from '~~/server/utils/stream'
 // прогресса (NDJSON): { type:'start' } → { type:'progress' } → { type:'done' }.
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ count?: number }>(event).catch(() => ({}))
-  const count = Math.min(Math.max(Number(body?.count) || 10, 1), 100)
+  const count = Math.max(Number(body?.count) || 10, 1) // без верхнего потолка
 
   setResponseHeader(event, 'content-type', 'application/x-ndjson; charset=utf-8')
   setResponseHeader(event, 'cache-control', 'no-cache, no-transform')
