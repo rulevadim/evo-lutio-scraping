@@ -37,3 +37,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
   content,            -- основной текст, очищенный от HTML
   tokenize = 'unicode61 remove_diacritics 2'
 );
+
+-- Мелкий key-value кэш (напр. общее число постов блога и время его подсчёта).
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);

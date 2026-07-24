@@ -58,7 +58,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `server/db/` — SQLite через `better-sqlite3` (синхронный). `index.ts` —
   singleton-подключение, при старте применяет `schema.sql` (idempotent). Файл БД —
-  `.data/blog.db` (в `.gitignore`).
+  `.data/blog.db` (в `.gitignore`). Таблицы: `posts`, `comments`, FTS5 `search`,
+  плюс мелкий key-value `meta` (кэш, напр. общее число постов блога `blog_total`).
 - **Поиск** — таблица FTS5 `search` с токенайзером `unicode61` (пословный поиск:
   целые слова, не подстроки; unicode-aware для кириллицы; без стеммера — формы
   слова не склеиваются). Наполняется из `posts`/`comments` при скрейпинге; запрос —
@@ -72,10 +73,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `archive.ts` (список `ditemid` месяца из `/YYYY/MM/`), `atomItem.ts` (тело поста
   по itemid из Atom), `comments.ts` (RPC), `scrape.ts` (оркестратор + upsert в БД +
   наполнение FTS; общий `createPersister` + `persistDitemids`, `scrape` — свежий
-  хвост, `scrapeOlder`/`scrapeNewer` — дозагрузка старых/новых из архива).
+  хвост, `scrapeOlder`/`scrapeNewer` — дозагрузка старых/новых из архива),
+  `stats.ts` (`countBlogPosts` — полное число постов блога).
+- **Полное число постов блога** — точного счётчика ЖЖ не отдаёт (профиль без
+  числа, годовая `/YYYY/` — лишь календарь дней без ссылок на посты). Считаем
+  обходом: `/calendar` → годы (`fetchCalendarYears`), `/YYYY/` → непустые месяцы
+  (`fetchYearMonths`, по ссылкам-дням), `/YYYY/MM/` → `ditemid` месяца; уникальные
+  id в общий Set. ~150 запросов (последовательно, с паузами), поэтому — **по кнопке**
+  и с кэшем в `meta` (`blog_total` + `blog_total_at`), не на каждый просмотр.
 - `server/api/` — Nitro routes: `scrape.post.ts` (свежий хвост, `{ limit? }`),
   `scrape/more.post.ts` (дозагрузка старых, `{ count? }` → `scrapeOlder`),
   `scrape/newer.post.ts` (дозагрузка новых, `{ count? }` → `scrapeNewer`),
+  `blog-stats.get.ts` (сохранено + кэш общего числа) / `blog-stats.post.ts`
+  (пересчёт `countBlogPosts` → кэш в `meta`),
   `posts.get.ts?page=N` (страница списка постов, 10 на страницу, ответ
   `{ page, totalPages, total, posts }`), `posts/[id].get.ts` (мета + счётчик
   комментов), `posts/[id]/comments.get.ts?page=N` (страница комментов +

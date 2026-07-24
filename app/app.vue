@@ -3,6 +3,17 @@ useHead({
   htmlAttrs: { lang: 'ru' },
   title: 'Эволюция — читалка',
 })
+
+const { stats, counting, ensureLoaded, count } = useBlogStats()
+onMounted(ensureLoaded)
+
+const countedTitle = computed(() =>
+  stats.value?.countedAt
+    ? `Сохранено ${stats.value.scraped} из ${stats.value.total}. Подсчитано: ${new Date(
+        stats.value.countedAt * 1000,
+      ).toLocaleString('ru-RU')}`
+    : 'Общее число постов ещё не подсчитано — нажмите «Подсчитать»',
+)
 </script>
 
 <template>
@@ -12,13 +23,32 @@ useHead({
         <NuxtLink to="/" class="text-lg font-semibold tracking-tight">
           evo·lutio <span class="text-neutral-400">/ читалка</span>
         </NuxtLink>
-        <a
-          href="https://evo-lutio.livejournal.com/"
-          target="_blank"
-          class="text-sm text-neutral-500 hover:text-neutral-900"
-        >
-          оригинал ↗
-        </a>
+
+        <div class="flex items-center gap-2 text-sm sm:gap-3">
+          <span class="tabular-nums text-neutral-500" :title="countedTitle">
+            {{ stats?.scraped ?? '—' }}<span class="mx-0.5 text-neutral-300">/</span>{{ stats?.total ?? '?' }}
+          </span>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 px-2.5 py-1 text-neutral-600 hover:border-neutral-500 disabled:opacity-50"
+            :disabled="counting"
+            :title="counting ? 'Обходим архив по месяцам…' : 'Посчитать все посты блога (займёт ~1–2 мин)'"
+            @click="count"
+          >
+            <span
+              v-if="counting"
+              class="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-600"
+            />
+            {{ counting ? 'Считаем…' : 'Подсчитать' }}
+          </button>
+          <a
+            href="https://evo-lutio.livejournal.com/"
+            target="_blank"
+            class="hidden text-neutral-500 hover:text-neutral-900 sm:inline"
+          >
+            оригинал ↗
+          </a>
+        </div>
       </div>
     </header>
 

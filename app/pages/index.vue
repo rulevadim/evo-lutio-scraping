@@ -70,6 +70,7 @@ watch(q, (val) => {
 // Скрейпинг: докачка старых постов из архива и загрузка свежего хвоста.
 const scraping = ref(false)
 const scrapeMsg = ref('')
+const blogStats = useBlogStats()
 
 async function runScrape(url: string, body: Record<string, number>, ok: (posts: number) => string) {
   scraping.value = true
@@ -78,6 +79,7 @@ async function runScrape(url: string, body: Record<string, number>, ok: (posts: 
     const res = await $fetch<{ posts: number; comments: number }>(url, { method: 'POST', body })
     scrapeMsg.value = ok(res.posts)
     await refresh()
+    await blogStats.refresh() // обновить счётчик «сохранено» в шапке
   } catch {
     scrapeMsg.value = 'Не удалось загрузить. Попробуйте ещё раз.'
   } finally {
