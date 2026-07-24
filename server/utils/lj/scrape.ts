@@ -90,6 +90,24 @@ function createPersister(db: Db) {
   return (post: RssPost, comments: LjComment[]) => save(post, comments)
 }
 
+type Persister = ReturnType<typeof createPersister>
+
+/**
+ * По списку `ditemid`: тело из Atom + все комментарии → persist. Общий «хвост»
+ * дозагрузки для {@link scrapeOlder} и {@link scrapeNewer}.
+ */
+async function persistDitemids(persist: Persister, ids: number[]): Promise<ScrapeResult> {
+  let commentCount = 0
+  for (const id of ids) {
+    const post = await fetchPostByItemid(id)
+    const comments = await fetchAllComments(id)
+    persist(post, comments)
+    commentCount += comments.length
+    await sleep(600) // вежливая пауза между постами
+  }
+  return { posts: ids.length, comments: commentCount }
+}
+
 /**
  * Оркестратор скрейпинга: RSS → по каждому посту тянем комментарии → upsert в БД
  * и пере-наполнение полнотекстового индекса. Идемпотентно (перезапись по id).
@@ -167,14 +185,68 @@ export async function scrapeOlder(
     if (picked.length < count) await sleep(600) // вежливая пауза между запросами месяцев
   }
 
-  let commentCount = 0
-  for (const id of picked) {
-    const post = await fetchPostByItemid(id)
-    const comments = await fetchAllComments(id)
-    persist(post, comments)
-    commentCount += comments.length
-    await sleep(600) // вежливая пауза между постами
+  return await persistDitemids(persist, picked)
+}
+
+/**
+ * Инкрементальная дозагрузка: добираем `count` постов **новее** самого свежего
+ * уже сохранённого (зеркало {@link scrapeOlder}). Идём месяцами **вперёд** от
+ * месяца самого свежего поста до текущего, берём из каталога `ditemid` строго
+ * новее самого свежего (`id > maxId`, ditemid монотонен) и ещё не сохранённые, по
+ * возрастанию — добор идёт вплотную вперёд, без пропусков и затирания. За текущий
+ * месяц не выходим (будущего нет); `maxMonths` — предохранитель.
+ */
+export async function scrapeNewer(
+  count = 10,
+  opts: { maxMonths?: number } = {},
+): Promise<ScrapeResult> {
+  const db = useDb()
+  const persist = createPersister(db)
+  const maxMonths = opts.maxMonths ?? 24
+
+  const existing = new Set<number>(
+    (db.prepare('SELECT id FROM posts').all() as { id: number }[]).map((r) => r.id),
+  )
+  const newest = db
+    .prepare('SELECT id, published_at FROM posts ORDER BY published_at DESC LIMIT 1')
+    .get() as { id: number; published_at: number } | undefined
+  // Пустая БД: «новее» нечего добирать — это работа обычного scrape (RSS).
+  if (!newest) return { posts: 0, comments: 0 }
+  const maxId = newest.id
+
+  // Стартовый месяц (UTC) — месяц самого свежего поста; идём вперёд до текущего.
+  const start = new Date(newest.published_at * 1000)
+  let year = start.getUTCFullYear()
+  let month = start.getUTCMonth() + 1 // 1..12
+  const now = new Date()
+  const curYear = now.getUTCFullYear()
+  const curMonth = now.getUTCMonth() + 1
+
+  const picked: number[] = []
+  for (let i = 0; i < maxMonths && picked.length < count; i++) {
+    let ids: number[] = []
+    try {
+      ids = await fetchMonthDitemids(year, month)
+    } catch (err) {
+      console.warn(`[scrapeNewer] пропуск ${year}/${month}:`, (err as Error).message)
+    }
+    // Только посты новее самого свежего, по возрастанию (ближайшие к границе первыми).
+    const fresh = ids.filter((id) => id > maxId && !existing.has(id)).sort((a, b) => a - b)
+    for (const id of fresh) {
+      if (picked.length >= count) break
+      picked.push(id)
+      existing.add(id)
+    }
+
+    // Дошли до текущего месяца — дальше будущего нет.
+    if (year === curYear && month === curMonth) break
+    month++
+    if (month === 13) {
+      month = 1
+      year++
+    }
+    if (picked.length < count) await sleep(600) // вежливая пауза между запросами месяцев
   }
 
-  return { posts: picked.length, comments: commentCount }
+  return await persistDitemids(persist, picked)
 }

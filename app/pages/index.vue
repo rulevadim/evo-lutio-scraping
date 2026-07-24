@@ -85,6 +85,11 @@ async function runScrape(url: string, body: Record<string, number>, ok: (posts: 
   }
 }
 
+const loadNewer = () =>
+  runScrape('/api/scrape/newer', { count: 10 }, (n) =>
+    n ? `Добавлено ${n} новых постов (в начале списка).` : 'Новее сохранённых постов нет.',
+  )
+
 const loadMore = () =>
   runScrape('/api/scrape/more', { count: 10 }, (n) =>
     n ? `Добавлено ${n} постов (они в конце списка).` : 'Новых старых постов не найдено.',
@@ -184,15 +189,26 @@ function fmtDate(ts: number): string {
 
         <div class="mt-6 flex flex-col items-center gap-3">
           <Pagination :page="page" :total="data.totalPages" @update:page="(p) => (page = p)" />
-          <button
-            type="button"
-            class="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm hover:border-neutral-500 disabled:opacity-50"
-            :disabled="scraping"
-            @click="loadMore"
-          >
-            {{ scraping ? 'Загружаем…' : 'Загрузить ещё 10 постов из архива' }}
-          </button>
-          <p v-if="scrapeMsg" class="text-xs text-neutral-500">{{ scrapeMsg }}</p>
+          <div class="flex flex-wrap justify-center gap-2">
+            <button
+              type="button"
+              class="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm hover:border-neutral-500 disabled:opacity-50"
+              :disabled="scraping"
+              @click="loadNewer"
+            >
+              Загрузить новые посты
+            </button>
+            <button
+              type="button"
+              class="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm hover:border-neutral-500 disabled:opacity-50"
+              :disabled="scraping"
+              @click="loadMore"
+            >
+              Ещё 10 постов из архива
+            </button>
+          </div>
+          <p v-if="scraping" class="text-xs text-neutral-400">Загружаем…</p>
+          <p v-else-if="scrapeMsg" class="text-xs text-neutral-500">{{ scrapeMsg }}</p>
         </div>
       </template>
     </section>

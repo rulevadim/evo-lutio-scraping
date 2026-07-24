@@ -39,7 +39,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `/data/atom/?itemid=<ditemid>` (полный HTML в `<content>`, как `<description>` в
   RSS; `atomItem.ts`). `scrapeOlder` идёт месяцами назад от самого старого
   сохранённого поста, пропуская уже имеющиеся `ditemid` (добор строго вглубь, без
-  дублей и затирания). Комментарии — тем же RPC, что и обычно.
+  дублей и затирания). `scrapeNewer` — зеркало: идёт месяцами **вперёд** от самого
+  свежего поста до текущего месяца, беря `ditemid` строго новее самого свежего
+  (`id > maxId`), чтобы догнать блог, когда RSS-хвост уже устарел. Комментарии — тем
+  же RPC, что и обычно.
 - **Комментарии** — JSON-RPC `/__rpc_get_thread?journal=evo_lutio&itemid=<ditemid>&page=N`:
   массив `comments` с полями `dname` (автор), `article` (HTML), `ctime_ts` (дата),
   `level`/`parent` (вложенность). Пагинация по **15 верхнеуровневых веток на
@@ -68,10 +71,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (декод сущностей, HTML→текст, `extract`), `rss.ts` (свежий хвост: посты+тело),
   `archive.ts` (список `ditemid` месяца из `/YYYY/MM/`), `atomItem.ts` (тело поста
   по itemid из Atom), `comments.ts` (RPC), `scrape.ts` (оркестратор + upsert в БД +
-  наполнение FTS; общий `createPersister`, `scrape` — свежий хвост,
-  `scrapeOlder` — дозагрузка старых).
+  наполнение FTS; общий `createPersister` + `persistDitemids`, `scrape` — свежий
+  хвост, `scrapeOlder`/`scrapeNewer` — дозагрузка старых/новых из архива).
 - `server/api/` — Nitro routes: `scrape.post.ts` (свежий хвост, `{ limit? }`),
   `scrape/more.post.ts` (дозагрузка старых, `{ count? }` → `scrapeOlder`),
+  `scrape/newer.post.ts` (дозагрузка новых, `{ count? }` → `scrapeNewer`),
   `posts.get.ts?page=N` (страница списка постов, 10 на страницу, ответ
   `{ page, totalPages, total, posts }`), `posts/[id].get.ts` (мета + счётчик
   комментов), `posts/[id]/comments.get.ts?page=N` (страница комментов +
