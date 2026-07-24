@@ -46,26 +46,37 @@ watch(page, (p) => {
 const q = ref('')
 const results = ref<SearchResult[]>([])
 const searching = ref(false)
+const sort = ref<'relevance' | 'date_desc' | 'date_asc'>('relevance')
 const active = computed(() => q.value.trim().length >= 3)
 
-let timer: ReturnType<typeof setTimeout> | undefined
-watch(q, (val) => {
-  clearTimeout(timer)
-  if (val.trim().length < 3) {
+async function runSearch() {
+  if (!active.value) {
     results.value = []
     return
   }
-  timer = setTimeout(async () => {
-    searching.value = true
-    try {
-      const res = await $fetch<{ results: SearchResult[] }>('/api/search', {
-        query: { q: val },
-      })
-      results.value = res.results
-    } finally {
-      searching.value = false
-    }
-  }, 250)
+  searching.value = true
+  try {
+    const res = await $fetch<{ results: SearchResult[] }>('/api/search', {
+      query: { q: q.value.trim(), sort: sort.value },
+    })
+    results.value = res.results
+  } finally {
+    searching.value = false
+  }
+}
+
+let timer: ReturnType<typeof setTimeout> | undefined
+watch(q, () => {
+  clearTimeout(timer)
+  if (!active.value) {
+    results.value = []
+    return
+  }
+  timer = setTimeout(runSearch, 250)
+})
+// Смена сортировки — сразу перезапрос (без debounce набора).
+watch(sort, () => {
+  if (active.value) runSearch()
 })
 
 // Скрейпинг: докачка старых/новых постов со стримингом прогресса (NDJSON).
@@ -181,10 +192,23 @@ function fmtDate(ts: number): string {
 
     <!-- Результаты поиска -->
     <section v-if="active">
-      <p class="mb-3 text-sm text-neutral-500">
-        <span v-if="searching">Ищем…</span>
-        <span v-else>Найдено: {{ results.length }}</span>
-      </p>
+      <div class="mb-3 flex items-center justify-between gap-3">
+        <p class="text-sm text-neutral-500">
+          <span v-if="searching">Ищем…</span>
+          <span v-else>Найдено: {{ results.length }}</span>
+        </p>
+        <label class="flex shrink-0 items-center gap-1.5 text-xs text-neutral-500">
+          Сортировка:
+          <select
+            v-model="sort"
+            class="rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-700 outline-none focus:border-neutral-500"
+          >
+            <option value="relevance">по релевантности</option>
+            <option value="date_desc">сначала новые</option>
+            <option value="date_asc">сначала старые</option>
+          </select>
+        </label>
+      </div>
       <ul class="space-y-2">
         <li
           v-for="(r, i) in results"

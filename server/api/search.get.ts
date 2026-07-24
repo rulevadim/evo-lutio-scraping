@@ -7,9 +7,10 @@ interface SearchRow {
   refId: number
   snippet: string
   author: string
+  createdAt: number // дата поста/коммента (для сортировки и вывода)
 }
 
-// GET /api/search?q=... — полнотекстовый поиск по постам и комментариям.
+// GET /api/search?q=...&sort=relevance|date_desc|date_asc — полнотекстовый поиск.
 export default defineEventHandler((event) => {
   const q = String(getQuery(event).q ?? '').trim()
   // Порог в 3 символа — чтобы не искать по слишком коротким/шумным запросам.
@@ -21,13 +22,29 @@ export default defineEventHandler((event) => {
   // пословный: матч по целым словам (не по подстрокам).
   const match = `"${q.replace(/"/g, '""')}"`
 
+  // Сортировка: релевантность (bm25) либо дата в обе стороны. `ORDER BY` берём из
+  // белого списка (не из строки пользователя) — без риска инъекции. Дату считаем
+  // прямо в запросе (пост → published_at, коммент → created_at), чтобы сортировать
+  // по ней ВСЕ совпадения, а не только топ-50 по релевантности.
+  const sort = String(getQuery(event).sort ?? 'relevance')
+  const orderBy =
+    sort === 'date_desc'
+      ? 'createdAt DESC'
+      : sort === 'date_asc'
+        ? 'createdAt ASC'
+        : 'bm25(search)'
+
   const rows = db
     .prepare(
       `SELECT kind, post_id AS postId, ref_id AS refId, author,
-              snippet(search, 5, '[', ']', '…', 12) AS snippet
+              snippet(search, 5, '[', ']', '…', 12) AS snippet,
+              CASE kind
+                WHEN 'post' THEN (SELECT published_at FROM posts WHERE id = search.ref_id)
+                ELSE (SELECT created_at FROM comments WHERE id = search.ref_id)
+              END AS createdAt
        FROM search
        WHERE search MATCH ?
-       ORDER BY bm25(search)
+       ORDER BY ${orderBy}
        LIMIT 50`,
     )
     .all(match) as SearchRow[]
@@ -43,10 +60,9 @@ export default defineEventHandler((event) => {
     for (const m of metas) postOf.set(m.id, { title: m.title, publishedAt: m.publishedAt })
   }
 
-  // Для комментария нужны его дата и страница пагинации (чтобы ссылка вела сразу туда).
-  const commentStmt = db.prepare(
-    'SELECT post_id AS postId, position, created_at AS createdAt FROM comments WHERE id = ?',
-  )
+  // Для комментария нужна страница пагинации (чтобы ссылка вела сразу туда); дата
+  // уже посчитана в основном запросе (r.createdAt).
+  const commentStmt = db.prepare('SELECT post_id AS postId, position FROM comments WHERE id = ?')
   const rankStmt = db.prepare(
     'SELECT COUNT(*) AS n FROM comments WHERE post_id = ? AND parent_id = 0 AND position <= ?',
   )
@@ -58,30 +74,20 @@ export default defineEventHandler((event) => {
   const enc = encodeURIComponent(q)
   const results = rows.map((r) => {
     const post = postOf.get(r.postId)
-    if (r.kind === 'comment') {
-      const c = commentStmt.get(r.refId) as
-        | { postId: number; position: number; createdAt: number }
-        | undefined
-      return {
-        kind: r.kind,
-        postId: r.postId,
-        postTitle: post?.title ?? '',
-        author: r.author,
-        snippet: r.snippet,
-        createdAt: c?.createdAt ?? 0, // дата самого коммента
-        // якорь к комментарию на нужной странице пагинации + запрос для подсветки слова
-        href: `/posts/${r.postId}?page=${c ? pageOf(c.postId, c.position) : 1}&q=${enc}#c${r.refId}`,
-      }
-    }
-    return {
+    const base = {
       kind: r.kind,
       postId: r.postId,
       postTitle: post?.title ?? '',
       author: r.author,
       snippet: r.snippet,
-      createdAt: post?.publishedAt ?? 0, // дата поста
-      href: `/posts/${r.postId}?q=${enc}`,
+      createdAt: r.createdAt ?? 0,
     }
+    if (r.kind === 'comment') {
+      const c = commentStmt.get(r.refId) as { postId: number; position: number } | undefined
+      // якорь к комментарию на нужной странице пагинации + запрос для подсветки слова
+      return { ...base, href: `/posts/${r.postId}?page=${c ? pageOf(c.postId, c.position) : 1}&q=${enc}#c${r.refId}` }
+    }
+    return { ...base, href: `/posts/${r.postId}?q=${enc}` }
   })
 
   return { query: q, results }
