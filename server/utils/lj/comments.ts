@@ -58,6 +58,7 @@ export async function fetchAllComments(
 ): Promise<LjComment[]> {
   const maxPages = opts.maxPages ?? 60
   const all: LjComment[] = []
+  const seen = new Set<number>() // dtalkid уже добавленных — против дублей между страницами
   let replycount = Number.POSITIVE_INFINITY
 
   for (let page = 1; page <= maxPages; page++) {
@@ -68,7 +69,19 @@ export async function fetchAllComments(
     const batch = (data.comments ?? []).filter((c) => Boolean(c?.dtalkid))
     if (batch.length === 0) break
 
-    for (const c of batch) all.push(mapComment(c, all.length))
+    // Дедуп по dtalkid: у некоторых постов ЖЖ повторно отдаёт уже виденные комменты
+    // на следующих страницах (когда `replycount` больше реального числа из-за
+    // удалённых) — иначе получаем дубли и `UNIQUE constraint failed` при вставке.
+    let added = 0
+    for (const c of batch) {
+      const id = Number(c.dtalkid)
+      if (seen.has(id)) continue
+      seen.add(id)
+      all.push(mapComment(c, all.length))
+      added++
+    }
+    // Страница не принесла ничего нового (повтор уже виденного) — это конец.
+    if (added === 0) break
 
     const topLevelInBatch = batch.filter((c) => Number(c.level) === 1).length
     // Достигли конца: набрали всё либо страница неполная (последняя).
