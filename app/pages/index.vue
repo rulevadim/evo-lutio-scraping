@@ -20,6 +20,7 @@ interface SearchResult {
   postTitle: string
   author: string
   snippet: string
+  createdAt: number // дата поста или коммента, в котором нашлось слово
   href: string
 }
 
@@ -193,13 +194,16 @@ function fmtDate(ts: number): string {
           <NuxtLink :to="r.href" class="block">
             <div class="mb-1 flex items-center gap-2 text-xs">
               <span
-                class="rounded px-1.5 py-0.5 font-medium"
+                class="shrink-0 rounded px-1.5 py-0.5 font-medium"
                 :class="r.kind === 'post' ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'"
               >
                 {{ r.kind === 'post' ? 'пост' : 'коммент' }}
               </span>
-              <span class="truncate text-neutral-500">
+              <span class="min-w-0 truncate text-neutral-500">
                 {{ r.postTitle }}<template v-if="r.author"> · {{ r.author }}</template>
+              </span>
+              <span v-if="r.createdAt" class="ml-auto shrink-0 text-neutral-400">
+                {{ fmtDate(r.createdAt) }}
               </span>
             </div>
             <p class="text-sm text-neutral-700">{{ r.snippet }}</p>
