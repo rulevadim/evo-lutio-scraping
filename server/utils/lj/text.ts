@@ -1,5 +1,11 @@
 // Утилиты работы с текстом/HTML для скрейпера.
 
+/** Содержимое первого тега `<tag …>…</tag>` в блоке (RSS/Atom-парсеры). */
+export function extract(block: string, tag: string): string {
+  const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`))
+  return m ? m[1] : ''
+}
+
 /** Раскодировать XML/HTML-сущности (для содержимого RSS и т.п.). */
 export function decodeEntities(s: string): string {
   return s

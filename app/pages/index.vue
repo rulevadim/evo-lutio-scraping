@@ -7,6 +7,13 @@ interface PostListItem {
   commentCount: number
 }
 
+interface PostsPage {
+  page: number
+  totalPages: number
+  total: number
+  posts: PostListItem[]
+}
+
 interface SearchResult {
   kind: 'post' | 'comment'
   postId: number
@@ -16,7 +23,24 @@ interface SearchResult {
   href: string
 }
 
-const { data: posts, pending } = await useFetch<PostListItem[]>('/api/posts')
+const route = useRoute()
+const router = useRouter()
+
+const page = ref(Math.max(1, Number(route.query.page) || 1))
+const { data, pending, refresh } = await useFetch<PostsPage>('/api/posts', {
+  query: { page },
+})
+
+// Сервер клампит страницу — синхронизируем локальное значение с фактическим.
+watch(data, (d) => {
+  if (d && d.page !== page.value) page.value = d.page
+})
+
+// Смена страницы: обновляем URL и прокручиваем вверх.
+watch(page, (p) => {
+  router.replace({ query: { ...route.query, page: p } })
+  if (import.meta.client) window.scrollTo({ top: 0, behavior: 'smooth' })
+})
 
 const q = ref('')
 const results = ref<SearchResult[]>([])
@@ -42,6 +66,32 @@ watch(q, (val) => {
     }
   }, 250)
 })
+
+// Скрейпинг: докачка старых постов из архива и загрузка свежего хвоста.
+const scraping = ref(false)
+const scrapeMsg = ref('')
+
+async function runScrape(url: string, body: Record<string, number>, ok: (posts: number) => string) {
+  scraping.value = true
+  scrapeMsg.value = ''
+  try {
+    const res = await $fetch<{ posts: number; comments: number }>(url, { method: 'POST', body })
+    scrapeMsg.value = ok(res.posts)
+    await refresh()
+  } catch {
+    scrapeMsg.value = 'Не удалось загрузить. Попробуйте ещё раз.'
+  } finally {
+    scraping.value = false
+  }
+}
+
+const loadMore = () =>
+  runScrape('/api/scrape/more', { count: 10 }, (n) =>
+    n ? `Добавлено ${n} постов (они в конце списка).` : 'Новых старых постов не найдено.',
+  )
+
+const scrapeLatest = () =>
+  runScrape('/api/scrape', { limit: 10 }, (n) => `Загружено ${n} постов.`)
 
 function fmtDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString('ru-RU', {
@@ -100,24 +150,51 @@ function fmtDate(ts: number): string {
     <section v-else>
       <h1 class="mb-4 text-xl font-semibold">Последние посты</h1>
       <p v-if="pending" class="text-sm text-neutral-400">Загрузка…</p>
-      <p v-else-if="!posts?.length" class="text-sm text-neutral-500">
-        Постов пока нет. Запустите скрейпинг: <code class="rounded bg-neutral-200 px-1">POST /api/scrape</code>
-      </p>
-      <ul v-else class="space-y-2">
-        <li
-          v-for="post in posts"
-          :key="post.id"
-          class="rounded-lg border border-neutral-200 bg-white transition hover:border-neutral-400"
+
+      <!-- Пусто: предложить первый скрейп -->
+      <div v-else-if="!data?.posts.length" class="space-y-3">
+        <p class="text-sm text-neutral-500">Постов пока нет.</p>
+        <button
+          type="button"
+          class="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm hover:border-neutral-500 disabled:opacity-50"
+          :disabled="scraping"
+          @click="scrapeLatest"
         >
-          <NuxtLink :to="`/posts/${post.id}`" class="block px-4 py-3">
-            <h2 class="font-medium">{{ post.title }}</h2>
-            <div class="mt-1 flex items-center gap-3 text-xs text-neutral-500">
-              <span>{{ fmtDate(post.publishedAt) }}</span>
-              <span>· {{ post.commentCount }} комм.</span>
-            </div>
-          </NuxtLink>
-        </li>
-      </ul>
+          {{ scraping ? 'Загружаем…' : 'Скрейпить последние посты' }}
+        </button>
+        <p v-if="scrapeMsg" class="text-xs text-neutral-500">{{ scrapeMsg }}</p>
+      </div>
+
+      <template v-else>
+        <ul class="space-y-2">
+          <li
+            v-for="post in data.posts"
+            :key="post.id"
+            class="rounded-lg border border-neutral-200 bg-white transition hover:border-neutral-400"
+          >
+            <NuxtLink :to="`/posts/${post.id}`" class="block px-4 py-3">
+              <h2 class="font-medium">{{ post.title }}</h2>
+              <div class="mt-1 flex items-center gap-3 text-xs text-neutral-500">
+                <span>{{ fmtDate(post.publishedAt) }}</span>
+                <span>· {{ post.commentCount }} комм.</span>
+              </div>
+            </NuxtLink>
+          </li>
+        </ul>
+
+        <div class="mt-6 flex flex-col items-center gap-3">
+          <Pagination :page="page" :total="data.totalPages" @update:page="(p) => (page = p)" />
+          <button
+            type="button"
+            class="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm hover:border-neutral-500 disabled:opacity-50"
+            :disabled="scraping"
+            @click="loadMore"
+          >
+            {{ scraping ? 'Загружаем…' : 'Загрузить ещё 10 постов из архива' }}
+          </button>
+          <p v-if="scrapeMsg" class="text-xs text-neutral-500">{{ scrapeMsg }}</p>
+        </div>
+      </template>
     </section>
   </div>
 </template>

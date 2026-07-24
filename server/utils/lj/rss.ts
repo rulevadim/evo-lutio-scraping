@@ -1,5 +1,5 @@
 import { LJ_BASE, ljGet } from './client'
-import { decodeEntities } from './text'
+import { decodeEntities, extract } from './text'
 
 export interface RssPost {
   id: number // ditemid
@@ -8,11 +8,6 @@ export interface RssPost {
   publishedAt: number // unix seconds
   tags: string[]
   bodyHtml: string
-}
-
-function extract(block: string, tag: string): string {
-  const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`))
-  return m ? m[1] : ''
 }
 
 /**

@@ -32,6 +32,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Список постов + тело** — RSS `/data/rss`: последние ~25 постов (берём 10),
   пермалинки вида `/<ditemid>.html`, заголовок, дата и **полный HTML статьи прямо
   в `<description>`** (с картинками). Поэтому отдельные страницы постов не парсим.
+- **Старые посты (дозагрузка «ещё 10»)** — RSS отдаёт только свежий хвост, поэтому
+  вглубь архива идём иначе: календарь `/YYYY/MM/` даёт список всех `ditemid` месяца
+  (уходит в прошлое без ограничений, в отличие от `?skip=` с потолком ~400,
+  `archive.ts`), а тело каждого старого поста берём из Atom
+  `/data/atom/?itemid=<ditemid>` (полный HTML в `<content>`, как `<description>` в
+  RSS; `atomItem.ts`). `scrapeOlder` идёт месяцами назад от самого старого
+  сохранённого поста, пропуская уже имеющиеся `ditemid` (добор строго вглубь, без
+  дублей и затирания). Комментарии — тем же RPC, что и обычно.
 - **Комментарии** — JSON-RPC `/__rpc_get_thread?journal=evo_lutio&itemid=<ditemid>&page=N`:
   массив `comments` с полями `dname` (автор), `article` (HTML), `ctime_ts` (дата),
   `level`/`parent` (вложенность). Пагинация по **15 верхнеуровневых веток на
@@ -57,12 +65,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   trigram-индекс, дропает и пересобирает `search` из `posts`/`comments`
   (`rebuildSearchIndex`) — без обращения к ЖЖ.
 - `server/utils/lj/` — скрейпер: `client.ts` (fetch+UA+паузы), `text.ts`
-  (декод сущностей, HTML→текст), `rss.ts` (посты+тело), `comments.ts` (RPC),
-  `scrape.ts` (оркестратор + upsert в БД + наполнение FTS).
-- `server/api/` — Nitro routes: `scrape.post.ts`, `posts.get.ts`,
-  `posts/[id].get.ts` (мета + счётчик комментов),
-  `posts/[id]/comments.get.ts?page=N` (страница комментов + `totalPages`),
-  `search.get.ts` (для комментов вычисляет страницу пагинации → ссылка `?page=N#c<id>`).
+  (декод сущностей, HTML→текст, `extract`), `rss.ts` (свежий хвост: посты+тело),
+  `archive.ts` (список `ditemid` месяца из `/YYYY/MM/`), `atomItem.ts` (тело поста
+  по itemid из Atom), `comments.ts` (RPC), `scrape.ts` (оркестратор + upsert в БД +
+  наполнение FTS; общий `createPersister`, `scrape` — свежий хвост,
+  `scrapeOlder` — дозагрузка старых).
+- `server/api/` — Nitro routes: `scrape.post.ts` (свежий хвост, `{ limit? }`),
+  `scrape/more.post.ts` (дозагрузка старых, `{ count? }` → `scrapeOlder`),
+  `posts.get.ts?page=N` (страница списка постов, 10 на страницу, ответ
+  `{ page, totalPages, total, posts }`), `posts/[id].get.ts` (мета + счётчик
+  комментов), `posts/[id]/comments.get.ts?page=N` (страница комментов +
+  `totalPages`), `search.get.ts` (для комментов вычисляет страницу пагинации →
+  ссылка `?page=N#c<id>`).
 - **Пагинация комментов из БД:** ветка со всеми ответами лежит в pre-order
   сплошным блоком по `position`, поэтому страница = диапазон позиций между началами
   N-й и (N+1)-й верхнеуровневых веток (без пересборки дерева на сервере).
