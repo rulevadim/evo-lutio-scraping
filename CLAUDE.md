@@ -95,6 +95,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (ошибка — `{type:'error',message}`). Наружу это идёт через `ProgressOpts`
   (`onStart`/`onProgress`) в `scrape`/`scrapeOlder`/`scrapeNewer`. Фронт
   (`index.vue`) читает поток `fetch`-ридером и рисует полосу «done/total».
+- **Агрессивный режим (`aggressive`):** галочка на фронте → `{ aggressive:true }` в
+  теле любого scrape-эндпоинта → `ScrapeOpts.aggressive`. Отключает вежливые паузы
+  (`sleep`) и качает посты **пулом параллельно** (`AGGRESSIVE_CONCURRENCY`, сейчас 6;
+  `runPool` в `scrape.ts`; `fetchAllComments` тоже без пауз). Быстрее, но жёстче к
+  ЖЖ — риск троттлинга/бана, поэтому только по явному запросу. По умолчанию выключен
+  (последовательно, с паузами).
 - `server/api/` — Nitro routes: `scrape.post.ts` (свежий хвост, `{ limit? }` 1..25),
   `scrape/more.post.ts` (дозагрузка старых, `{ count? }` ≥1 без потолка → `scrapeOlder`),
   `scrape/newer.post.ts` (дозагрузка новых, `{ count? }` ≥1 без потолка → `scrapeNewer`),

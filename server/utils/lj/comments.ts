@@ -54,7 +54,7 @@ function mapComment(c: RpcComment, position: number): LjComment {
  */
 export async function fetchAllComments(
   ditemid: number,
-  opts: { maxPages?: number } = {},
+  opts: { maxPages?: number; aggressive?: boolean } = {},
 ): Promise<LjComment[]> {
   const maxPages = opts.maxPages ?? 60
   const all: LjComment[] = []
@@ -87,7 +87,7 @@ export async function fetchAllComments(
     // Достигли конца: набрали всё либо страница неполная (последняя).
     if (all.length >= replycount || topLevelInBatch < COMMENTS_PAGE_SIZE) break
 
-    await sleep(400) // вежливая пауза между страницами
+    if (!opts.aggressive) await sleep(400) // вежливая пауза между страницами
   }
 
   return all

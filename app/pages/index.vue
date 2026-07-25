@@ -84,6 +84,7 @@ const scraping = ref(false)
 const scrapeMsg = ref('')
 const progress = ref<{ done: number; total: number } | null>(null)
 const oldCount = ref(20) // выбранное число для «Загрузить старые» (≥1, без потолка)
+const aggressive = ref(false) // агрессивный режим: без пауз + параллельно (жёстко к ЖЖ)
 const blogStats = useBlogStats()
 
 interface ScrapeEvent {
@@ -98,7 +99,7 @@ interface ScrapeEvent {
 // Прочитать NDJSON-поток скрейпа построчно, вызывая onEvent на каждое событие.
 async function readScrapeStream(
   url: string,
-  body: Record<string, number>,
+  body: Record<string, number | boolean>,
   onEvent: (e: ScrapeEvent) => void,
 ) {
   const res = await fetch(url, {
@@ -126,7 +127,11 @@ async function readScrapeStream(
   if (tail) onEvent(JSON.parse(tail) as ScrapeEvent)
 }
 
-async function runScrape(url: string, body: Record<string, number>, ok: (posts: number) => string) {
+async function runScrape(
+  url: string,
+  body: Record<string, number | boolean>,
+  ok: (posts: number) => string,
+) {
   scraping.value = true
   scrapeMsg.value = ''
   progress.value = null
@@ -150,25 +155,25 @@ async function runScrape(url: string, body: Record<string, number>, ok: (posts: 
 }
 
 const loadNewer = () =>
-  runScrape('/api/scrape/newer', { count: 10 }, (n) =>
+  runScrape('/api/scrape/newer', { count: 10, aggressive: aggressive.value }, (n) =>
     n ? `Добавлено ${n} новых постов (в начале списка).` : 'Новее сохранённых постов нет.',
   )
 
 const loadMore = () =>
-  runScrape('/api/scrape/more', { count: 10 }, (n) =>
+  runScrape('/api/scrape/more', { count: 10, aggressive: aggressive.value }, (n) =>
     n ? `Добавлено ${n} постов (они в конце списка).` : 'Новых старых постов не найдено.',
   )
 
 const loadOld = () => {
   const count = Math.max(Math.trunc(oldCount.value) || 1, 1)
   oldCount.value = count
-  return runScrape('/api/scrape/more', { count }, (n) =>
+  return runScrape('/api/scrape/more', { count, aggressive: aggressive.value }, (n) =>
     n ? `Добавлено ${n} старых постов (они в конце списка).` : 'Новых старых постов не найдено.',
   )
 }
 
 const scrapeLatest = () =>
-  runScrape('/api/scrape', { limit: 10 }, (n) => `Загружено ${n} постов.`)
+  runScrape('/api/scrape', { limit: 10, aggressive: aggressive.value }, (n) => `Загружено ${n} постов.`)
 
 function fmtDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString('ru-RU', {
@@ -312,6 +317,18 @@ function fmtDate(ts: number): string {
                 Загрузить старые
               </button>
             </span>
+            <label
+              class="inline-flex cursor-pointer items-center gap-1.5 text-sm text-neutral-600"
+              title="Без пауз и параллельно — быстрее, но жёстче к ЖЖ (риск временного троттлинга/бана)"
+            >
+              <input
+                v-model="aggressive"
+                type="checkbox"
+                :disabled="scraping"
+                class="h-4 w-4 accent-neutral-800 disabled:opacity-50"
+              >
+              агрессивно
+            </label>
           </div>
 
           <!-- Прогресс загрузки: реально видно, сколько постов из скольких -->

@@ -23,6 +23,31 @@ export interface ProgressOpts {
   onProgress?: (done: number, total: number) => void
 }
 
+/**
+ * Опции скрейпа. `aggressive` — «агрессивный» режим: без вежливых пауз и с
+ * параллельной выкачкой постов пулом. Быстрее, но заметно жёстче к ЖЖ (риск
+ * троттлинга/бана), поэтому включается только по явному запросу с фронта.
+ */
+export interface ScrapeOpts extends ProgressOpts {
+  aggressive?: boolean
+}
+
+// Сколько постов качать одновременно в агрессивном режиме.
+const AGGRESSIVE_CONCURRENCY = 6
+
+/** Прогнать items через worker с ограничением на одновременность. */
+async function runPool<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let cursor = 0
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) await worker(items[cursor++]!)
+  })
+  await Promise.all(runners)
+}
+
 type Db = ReturnType<typeof useDb>
 
 /**
@@ -124,16 +149,27 @@ async function savePost(persist: Persister, post: RssPost, comments: LjComment[]
 async function persistDitemids(
   persist: Persister,
   ids: number[],
-  progress: ProgressOpts = {},
+  opts: ScrapeOpts = {},
 ): Promise<ScrapeResult> {
-  progress.onStart?.(ids.length)
+  opts.onStart?.(ids.length)
   let commentCount = 0
-  for (let i = 0; i < ids.length; i++) {
-    const post = await fetchPostByItemid(ids[i]!)
-    const comments = await fetchAllComments(ids[i]!)
+  let done = 0
+
+  const handle = async (id: number) => {
+    const post = await fetchPostByItemid(id)
+    const comments = await fetchAllComments(id, { aggressive: opts.aggressive })
     commentCount += await savePost(persist, post, comments)
-    progress.onProgress?.(i + 1, ids.length)
-    await sleep(600) // вежливая пауза между постами
+    opts.onProgress?.(++done, ids.length)
+  }
+
+  if (opts.aggressive) {
+    // Без пауз, посты качаем пулом параллельно.
+    await runPool(ids, AGGRESSIVE_CONCURRENCY, handle)
+  } else {
+    for (const id of ids) {
+      await handle(id)
+      await sleep(600) // вежливая пауза между постами
+    }
   }
   return { posts: ids.length, comments: commentCount }
 }
@@ -142,19 +178,28 @@ async function persistDitemids(
  * Оркестратор скрейпинга: RSS → по каждому посту тянем комментарии → upsert в БД
  * и пере-наполнение полнотекстового индекса. Идемпотентно (перезапись по id).
  */
-export async function scrape(limit = 10, progress: ProgressOpts = {}): Promise<ScrapeResult> {
+export async function scrape(limit = 10, opts: ScrapeOpts = {}): Promise<ScrapeResult> {
   const db = useDb()
   const persist = createPersister(db)
 
   const posts = await fetchRecentPosts(limit)
-  progress.onStart?.(posts.length)
+  opts.onStart?.(posts.length)
   let commentCount = 0
+  let done = 0
 
-  for (let i = 0; i < posts.length; i++) {
-    const comments = await fetchAllComments(posts[i]!.id)
-    commentCount += await savePost(persist, posts[i]!, comments)
-    progress.onProgress?.(i + 1, posts.length)
-    await sleep(600) // вежливая пауза между постами
+  const handle = async (post: RssPost) => {
+    const comments = await fetchAllComments(post.id, { aggressive: opts.aggressive })
+    commentCount += await savePost(persist, post, comments)
+    opts.onProgress?.(++done, posts.length)
+  }
+
+  if (opts.aggressive) {
+    await runPool(posts, AGGRESSIVE_CONCURRENCY, handle)
+  } else {
+    for (const post of posts) {
+      await handle(post)
+      await sleep(600) // вежливая пауза между постами
+    }
   }
 
   return { posts: posts.length, comments: commentCount }
@@ -172,7 +217,7 @@ export async function scrape(limit = 10, progress: ProgressOpts = {}): Promise<S
  */
 export async function scrapeOlder(
   count = 10,
-  opts: { maxMonths?: number } & ProgressOpts = {},
+  opts: { maxMonths?: number } & ScrapeOpts = {},
 ): Promise<ScrapeResult> {
   const db = useDb()
   const persist = createPersister(db)
@@ -218,7 +263,7 @@ export async function scrapeOlder(
       month = 12
       year--
     }
-    if (picked.length < count) await sleep(600) // вежливая пауза между запросами месяцев
+    if (picked.length < count && !opts.aggressive) await sleep(600) // вежливая пауза
   }
 
   return await persistDitemids(persist, picked, opts)
@@ -234,7 +279,7 @@ export async function scrapeOlder(
  */
 export async function scrapeNewer(
   count = 10,
-  opts: { maxMonths?: number } & ProgressOpts = {},
+  opts: { maxMonths?: number } & ScrapeOpts = {},
 ): Promise<ScrapeResult> {
   const db = useDb()
   const persist = createPersister(db)
@@ -281,7 +326,7 @@ export async function scrapeNewer(
       month = 1
       year++
     }
-    if (picked.length < count) await sleep(600) // вежливая пауза между запросами месяцев
+    if (picked.length < count && !opts.aggressive) await sleep(600) // вежливая пауза
   }
 
   return await persistDitemids(persist, picked, opts)
