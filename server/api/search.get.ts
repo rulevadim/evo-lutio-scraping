@@ -10,11 +10,15 @@ interface SearchRow {
   createdAt: number // дата поста/коммента (для сортировки и вывода)
 }
 
-// GET /api/search?q=...&sort=relevance|date_desc|date_asc — полнотекстовый поиск.
+const SEARCH_PAGE_SIZE = 100
+
+// GET /api/search?q=...&sort=relevance|date_desc|date_asc&page=N — полнотекстовый поиск.
 export default defineEventHandler((event) => {
   const q = String(getQuery(event).q ?? '').trim()
   // Порог в 3 символа — чтобы не искать по слишком коротким/шумным запросам.
-  if (q.length < 3) return { query: q, results: [] as unknown[] }
+  if (q.length < 3) {
+    return { query: q, page: 1, totalPages: 1, total: 0, results: [] as unknown[] }
+  }
 
   const db = useDb()
   // Оборачиваем в фразу (экранируя кавычки), чтобы спецсимволы (—, ", *, : и т.п.)
@@ -34,6 +38,14 @@ export default defineEventHandler((event) => {
         ? 'createdAt ASC'
         : 'bm25(search)'
 
+  // Всего совпадений — для пагинации; страницу клампим на сервере.
+  const total = (
+    db.prepare('SELECT COUNT(*) AS n FROM search WHERE search MATCH ?').get(match) as { n: number }
+  ).n
+  const totalPages = Math.max(1, Math.ceil(total / SEARCH_PAGE_SIZE))
+  const requested = Number(getQuery(event).page) || 1
+  const page = Math.min(Math.max(Math.trunc(requested), 1), totalPages)
+
   const rows = db
     .prepare(
       `SELECT kind, post_id AS postId, ref_id AS refId, author,
@@ -45,9 +57,9 @@ export default defineEventHandler((event) => {
        FROM search
        WHERE search MATCH ?
        ORDER BY ${orderBy}
-       LIMIT 50`,
+       LIMIT ? OFFSET ?`,
     )
-    .all(match) as SearchRow[]
+    .all(match, SEARCH_PAGE_SIZE, (page - 1) * SEARCH_PAGE_SIZE) as SearchRow[]
 
   // Подтягиваем заголовок и дату поста для контекста результатов.
   const postOf = new Map<number, { title: string; publishedAt: number }>()
@@ -90,5 +102,5 @@ export default defineEventHandler((event) => {
     return { ...base, href: `/posts/${r.postId}?q=${enc}` }
   })
 
-  return { query: q, results }
+  return { query: q, page, totalPages, total, results }
 })

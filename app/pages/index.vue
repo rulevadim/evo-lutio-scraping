@@ -43,39 +43,67 @@ watch(page, (p) => {
   if (import.meta.client) window.scrollTo({ top: 0, behavior: 'smooth' })
 })
 
+interface SearchResponse {
+  page: number
+  totalPages: number
+  total: number
+  results: SearchResult[]
+}
+
 const q = ref('')
 const results = ref<SearchResult[]>([])
 const searching = ref(false)
 const sort = ref<'relevance' | 'date_desc' | 'date_asc'>('relevance')
+const searchPage = ref(1)
+const searchTotal = ref(0)
+const searchTotalPages = ref(1)
 const active = computed(() => q.value.trim().length >= 3)
+
+function resetSearch() {
+  results.value = []
+  searchTotal.value = 0
+  searchTotalPages.value = 1
+}
 
 async function runSearch() {
   if (!active.value) {
-    results.value = []
+    resetSearch()
     return
   }
   searching.value = true
   try {
-    const res = await $fetch<{ results: SearchResult[] }>('/api/search', {
-      query: { q: q.value.trim(), sort: sort.value },
+    const res = await $fetch<SearchResponse>('/api/search', {
+      query: { q: q.value.trim(), sort: sort.value, page: searchPage.value },
     })
     results.value = res.results
+    searchTotal.value = res.total
+    searchTotalPages.value = res.totalPages
+    if (res.page !== searchPage.value) searchPage.value = res.page // сервер клампит страницу
   } finally {
     searching.value = false
   }
 }
 
+// Смена страницы результатов поиска.
+function goSearchPage(p: number) {
+  searchPage.value = p
+  runSearch()
+  if (import.meta.client) window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
 let timer: ReturnType<typeof setTimeout> | undefined
 watch(q, () => {
   clearTimeout(timer)
+  searchPage.value = 1 // новый запрос — с первой страницы
   if (!active.value) {
-    results.value = []
+    resetSearch()
     return
   }
   timer = setTimeout(runSearch, 250)
 })
-// Смена сортировки — сразу перезапрос (без debounce набора).
+// Смена сортировки — на первую страницу и сразу перезапрос (без debounce набора).
 watch(sort, () => {
+  searchPage.value = 1
   if (active.value) runSearch()
 })
 
@@ -211,7 +239,7 @@ function fmtDate(ts: number): string {
       <div class="mb-3 flex items-center justify-between gap-3">
         <p class="text-sm text-neutral-500">
           <span v-if="searching">Ищем…</span>
-          <span v-else>Найдено: {{ results.length }}</span>
+          <span v-else>Найдено: {{ searchTotal }}</span>
         </p>
         <label class="flex shrink-0 items-center gap-1.5 text-xs text-neutral-500">
           Сортировка:
@@ -250,6 +278,11 @@ function fmtDate(ts: number): string {
           </NuxtLink>
         </li>
       </ul>
+
+      <div v-if="searchTotalPages > 1" class="mt-4 flex justify-center">
+        <Pagination :page="searchPage" :total="searchTotalPages" @update:page="goSearchPage" />
+      </div>
+
       <p v-if="!searching && results.length === 0" class="text-sm text-neutral-400">
         Ничего не найдено.
       </p>
