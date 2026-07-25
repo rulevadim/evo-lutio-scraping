@@ -54,10 +54,11 @@ const q = ref('')
 const results = ref<SearchResult[]>([])
 const searching = ref(false)
 const sort = ref<'relevance' | 'date_desc' | 'date_asc'>('relevance')
+const caseSensitive = ref(false)
 const searchPage = ref(1)
 const searchTotal = ref(0)
 const searchTotalPages = ref(1)
-const active = computed(() => q.value.trim().length >= 3)
+const active = computed(() => q.value.trim().length >= 2)
 
 function resetSearch() {
   results.value = []
@@ -73,7 +74,7 @@ async function runSearch() {
   searching.value = true
   try {
     const res = await $fetch<SearchResponse>('/api/search', {
-      query: { q: q.value.trim(), sort: sort.value, page: searchPage.value },
+      query: { q: q.value.trim(), sort: sort.value, page: searchPage.value, cs: caseSensitive.value },
     })
     results.value = res.results
     searchTotal.value = res.total
@@ -101,8 +102,8 @@ watch(q, () => {
   }
   timer = setTimeout(runSearch, 250)
 })
-// Смена сортировки — на первую страницу и сразу перезапрос (без debounce набора).
-watch(sort, () => {
+// Смена сортировки/регистра — на первую страницу и сразу перезапрос (без debounce набора).
+watch([sort, caseSensitive], () => {
   searchPage.value = 1
   if (active.value) runSearch()
 })
@@ -229,7 +230,7 @@ function fmtDate(ts: number): string {
       <input
         v-model="q"
         type="search"
-        placeholder="Поиск по постам и комментариям (от 3 символов)…"
+        placeholder="Поиск по постам и комментариям (от 2 символов)…"
         class="w-full rounded-lg border border-neutral-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-neutral-500"
       >
     </div>
@@ -241,17 +242,26 @@ function fmtDate(ts: number): string {
           <span v-if="searching">Ищем…</span>
           <span v-else>Найдено: {{ searchTotal }}</span>
         </p>
-        <label class="flex shrink-0 items-center gap-1.5 text-xs text-neutral-500">
-          Сортировка:
-          <select
-            v-model="sort"
-            class="rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-700 outline-none focus:border-neutral-500"
+        <div class="flex shrink-0 items-center gap-3">
+          <label
+            class="flex cursor-pointer items-center gap-1.5 text-xs text-neutral-500"
+            title="Искать с учётом регистра букв"
           >
-            <option value="relevance">по релевантности</option>
-            <option value="date_desc">сначала новые</option>
-            <option value="date_asc">сначала старые</option>
-          </select>
-        </label>
+            <input v-model="caseSensitive" type="checkbox" class="h-3.5 w-3.5 accent-neutral-800">
+            с учётом регистра
+          </label>
+          <label class="flex items-center gap-1.5 text-xs text-neutral-500">
+            Сортировка:
+            <select
+              v-model="sort"
+              class="rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-700 outline-none focus:border-neutral-500"
+            >
+              <option value="relevance">по релевантности</option>
+              <option value="date_desc">сначала новые</option>
+              <option value="date_asc">сначала старые</option>
+            </select>
+          </label>
+        </div>
       </div>
       <ul class="space-y-2">
         <li

@@ -12,11 +12,11 @@ interface SearchRow {
 
 const SEARCH_PAGE_SIZE = 100
 
-// GET /api/search?q=...&sort=relevance|date_desc|date_asc&page=N — полнотекстовый поиск.
+// GET /api/search?q=...&sort=relevance|date_desc|date_asc&page=N&cs=true — поиск.
 export default defineEventHandler((event) => {
   const q = String(getQuery(event).q ?? '').trim()
-  // Порог в 3 символа — чтобы не искать по слишком коротким/шумным запросам.
-  if (q.length < 3) {
+  // Порог в 2 символа — чтобы не искать по слишком коротким/шумным запросам.
+  if (q.length < 2) {
     return { query: q, page: 1, totalPages: 1, total: 0, results: [] as unknown[] }
   }
 
@@ -25,6 +25,13 @@ export default defineEventHandler((event) => {
   // не трактовались как операторы FTS5, а искались буквально. Токенайзер unicode61 —
   // пословный: матч по целым словам (не по подстрокам).
   const match = `"${q.replace(/"/g, '""')}"`
+
+  // Регистрозависимый поиск (`?cs=true`): FTS (unicode61) всегда складывает регистр,
+  // поэтому кандидатов от MATCH до-фильтруем по точному вхождению строки через `instr`
+  // (побайтовый → регистрозависимый; экранирование не нужно).
+  const caseSensitive = String(getQuery(event).cs ?? '') === 'true'
+  const where = caseSensitive ? 'search MATCH ? AND instr(content, ?) > 0' : 'search MATCH ?'
+  const whereParams = caseSensitive ? [match, q] : [match]
 
   // Сортировка: релевантность (bm25) либо дата в обе стороны. `ORDER BY` берём из
   // белого списка (не из строки пользователя) — без риска инъекции. Дату считаем
@@ -40,7 +47,7 @@ export default defineEventHandler((event) => {
 
   // Всего совпадений — для пагинации; страницу клампим на сервере.
   const total = (
-    db.prepare('SELECT COUNT(*) AS n FROM search WHERE search MATCH ?').get(match) as { n: number }
+    db.prepare(`SELECT COUNT(*) AS n FROM search WHERE ${where}`).get(...whereParams) as { n: number }
   ).n
   const totalPages = Math.max(1, Math.ceil(total / SEARCH_PAGE_SIZE))
   const requested = Number(getQuery(event).page) || 1
@@ -55,11 +62,11 @@ export default defineEventHandler((event) => {
                 ELSE (SELECT created_at FROM comments WHERE id = search.ref_id)
               END AS createdAt
        FROM search
-       WHERE search MATCH ?
+       WHERE ${where}
        ORDER BY ${orderBy}
        LIMIT ? OFFSET ?`,
     )
-    .all(match, SEARCH_PAGE_SIZE, (page - 1) * SEARCH_PAGE_SIZE) as SearchRow[]
+    .all(...whereParams, SEARCH_PAGE_SIZE, (page - 1) * SEARCH_PAGE_SIZE) as SearchRow[]
 
   // Подтягиваем заголовок и дату поста для контекста результатов.
   const postOf = new Map<number, { title: string; publishedAt: number }>()
