@@ -7,6 +7,7 @@ import { fetchAllComments } from './comments'
 import { reserveImgSpace } from './images'
 import type { RssPost } from './rss'
 import { fetchRecentPosts } from './rss'
+import { collectArchiveDitemids } from './stats'
 import { htmlToText } from './text'
 
 export interface ScrapeResult {
@@ -330,4 +331,27 @@ export async function scrapeNewer(
   }
 
   return await persistDitemids(persist, picked, opts)
+}
+
+/**
+ * Докачать **пропущенные** посты: обойти архив (все `ditemid` блога через
+ * {@link collectArchiveDitemids}), вычесть уже сохранённые и скачать недостающие.
+ * В отличие от `scrapeOlder`/`scrapeNewer` закрывает дырки **где угодно** — в начале,
+ * конце и особенно в середине (куда те не дотягиваются, т.к. ходят только за границы).
+ * `onScan(done,total)` — прогресс фазы сканирования архива (по годам), до `onStart`.
+ */
+export async function scrapeMissing(
+  opts: ScrapeOpts & { onScan?: (done: number, total: number) => void } = {},
+): Promise<ScrapeResult> {
+  const archive = await collectArchiveDitemids({ onProgress: opts.onScan })
+
+  const db = useDb()
+  const existing = new Set<number>(
+    (db.prepare('SELECT id FROM posts').all() as { id: number }[]).map((r) => r.id),
+  )
+  // Недостающие, новее-первыми (крупный ditemid ≈ свежее).
+  const missing = [...archive].filter((id) => !existing.has(id)).sort((a, b) => b - a)
+
+  const persist = createPersister(db)
+  return await persistDitemids(persist, missing, opts)
 }

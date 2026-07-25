@@ -83,12 +83,13 @@ watch(sort, () => {
 const scraping = ref(false)
 const scrapeMsg = ref('')
 const progress = ref<{ done: number; total: number } | null>(null)
+const scan = ref<{ done: number; total: number } | null>(null) // фаза обхода архива (докачка пропущенных)
 const oldCount = ref(20) // выбранное число для «Загрузить старые» (≥1, без потолка)
 const aggressive = ref(false) // агрессивный режим: без пауз + параллельно (жёстко к ЖЖ)
 const blogStats = useBlogStats()
 
 interface ScrapeEvent {
-  type: 'start' | 'progress' | 'done' | 'error'
+  type: 'scan' | 'start' | 'progress' | 'done' | 'error'
   total?: number
   done?: number
   posts?: number
@@ -135,11 +136,15 @@ async function runScrape(
   scraping.value = true
   scrapeMsg.value = ''
   progress.value = null
+  scan.value = null
   let posts = 0
   try {
     await readScrapeStream(url, body, (e) => {
-      if (e.type === 'start') progress.value = { done: 0, total: e.total ?? 0 }
-      else if (e.type === 'progress') progress.value = { done: e.done ?? 0, total: e.total ?? 0 }
+      if (e.type === 'scan') scan.value = { done: e.done ?? 0, total: e.total ?? 0 }
+      else if (e.type === 'start') {
+        scan.value = null // скан закончился — начинается собственно загрузка
+        progress.value = { done: 0, total: e.total ?? 0 }
+      } else if (e.type === 'progress') progress.value = { done: e.done ?? 0, total: e.total ?? 0 }
       else if (e.type === 'done') posts = e.posts ?? 0
       else if (e.type === 'error') throw new Error(e.message ?? 'Ошибка')
     })
@@ -151,6 +156,7 @@ async function runScrape(
   } finally {
     scraping.value = false
     progress.value = null
+    scan.value = null
   }
 }
 
@@ -174,6 +180,11 @@ const loadOld = () => {
 
 const scrapeLatest = () =>
   runScrape('/api/scrape', { limit: 10, aggressive: aggressive.value }, (n) => `Загружено ${n} постов.`)
+
+const loadMissing = () =>
+  runScrape('/api/scrape/missing', { aggressive: aggressive.value }, (n) =>
+    n ? `Докачано ${n} пропущенных постов.` : 'Пропущенных постов нет — всё на месте.',
+  )
 
 function fmtDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString('ru-RU', {
@@ -317,6 +328,15 @@ function fmtDate(ts: number): string {
                 Загрузить старые
               </button>
             </span>
+            <button
+              type="button"
+              class="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm hover:border-neutral-500 disabled:opacity-50"
+              :disabled="scraping"
+              title="Обойти архив и докачать все посты, которых нет в базе (закрывает дырки в любом месте)"
+              @click="loadMissing"
+            >
+              Докачать пропущенные
+            </button>
             <label
               class="inline-flex cursor-pointer items-center gap-1.5 text-sm text-neutral-600"
               title="Без пауз и параллельно — быстрее, но жёстче к ЖЖ (риск временного троттлинга/бана)"
@@ -333,7 +353,19 @@ function fmtDate(ts: number): string {
 
           <!-- Прогресс загрузки: реально видно, сколько постов из скольких -->
           <div v-if="scraping" class="w-full max-w-xs">
-            <template v-if="progress && progress.total">
+            <template v-if="scan">
+              <div class="mb-1 flex justify-between text-xs text-neutral-500">
+                <span>Сканируем архив…</span>
+                <span class="tabular-nums">{{ scan.done }} / {{ scan.total }} лет</span>
+              </div>
+              <div class="h-2 w-full overflow-hidden rounded-full bg-neutral-200">
+                <div
+                  class="h-full rounded-full bg-neutral-500 transition-all duration-300"
+                  :style="{ width: (scan.total ? (scan.done / scan.total) * 100 : 0) + '%' }"
+                />
+              </div>
+            </template>
+            <template v-else-if="progress && progress.total">
               <div class="mb-1 flex justify-between text-xs text-neutral-500">
                 <span>Загружаем посты…</span>
                 <span class="tabular-nums">{{ progress.done }} / {{ progress.total }}</span>

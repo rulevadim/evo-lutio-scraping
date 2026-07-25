@@ -2,19 +2,21 @@ import { fetchCalendarYears, fetchMonthDitemids, fetchYearMonths } from './archi
 import { sleep } from './client'
 
 /**
- * Полное число постов в блоге. Точного счётчика ЖЖ не отдаёт, поэтому считаем:
- * `/calendar` → годы, `/YYYY/` → непустые месяцы, `/YYYY/MM/` → `ditemid` месяца;
- * складываем уникальные id в общий Set. Пустые месяцы/годы пропускаем (их нет в
- * календаре-сетке). Дорого (~150 запросов) — вызывать редко и кэшировать.
+ * Собрать **все** `ditemid` блога, обойдя архив: `/calendar` → годы, `/YYYY/` →
+ * непустые месяцы, `/YYYY/MM/` → id постов. Уникальные складываем в Set. Дорого
+ * (~150 запросов, последовательно, с паузами и ретраями) — вызывать редко.
+ * `onProgress(done, total)` вызывается после каждого обработанного года.
  */
-export async function countBlogPosts(): Promise<number> {
-  const R = { retries: 3 } // ~150 живых запросов подряд — единичный blip не должен ронять всё
+export async function collectArchiveDitemids(
+  opts: { onProgress?: (done: number, total: number) => void } = {},
+): Promise<Set<number>> {
+  const R = { retries: 3 } // единичный blip на ~150 запросов не должен ронять обход
   const years = await fetchCalendarYears(R)
   const all = new Set<number>()
 
-  for (const year of years) {
-    // Если годовая страница не открылась даже с ретраями — не теряем год,
-    // а обходим все 12 месяцев (пустые дадут 0).
+  for (let i = 0; i < years.length; i++) {
+    const year = years[i]!
+    // Годовая страница не открылась даже с ретраями — не теряем год, обойдём все 12.
     let months: number[]
     try {
       months = await fetchYearMonths(year, R)
@@ -28,12 +30,20 @@ export async function countBlogPosts(): Promise<number> {
         const ids = await fetchMonthDitemids(year, month, R)
         for (const id of ids) all.add(id)
       } catch (err) {
-        // Месяц не дался даже с ретраями — пропускаем (небольшой недосчёт), не роняем обход.
-        console.warn(`[countBlogPosts] месяц ${year}/${month} пропущен:`, (err as Error).message)
+        console.warn(`[collectArchiveDitemids] ${year}/${month}:`, (err as Error).message)
       }
       await sleep(300) // вежливая пауза между запросами месяцев
     }
+    opts.onProgress?.(i + 1, years.length)
   }
 
-  return all.size
+  return all
+}
+
+/**
+ * Полное число постов в блоге (см. {@link collectArchiveDitemids}). Точного
+ * счётчика ЖЖ не отдаёт — считаем обходом архива. Дорого; кэшировать.
+ */
+export async function countBlogPosts(): Promise<number> {
+  return (await collectArchiveDitemids()).size
 }
