@@ -1,5 +1,78 @@
-# Vue 3 + TypeScript + Vite
+# evo-lutio-scraping
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Учебный full-stack пет-проект на **Nuxt 4**: читалка блога
+[«Эволюция»](https://evo-lutio.livejournal.com/) в собственном интерфейсе.
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+Приложение скрейпит посты и все их комментарии, складывает в локальную SQLite и
+показывает в простой вёрстке — список постов, страница поста с деревом
+комментариев и полнотекстовый поиск по всему сохранённому контенту.
+
+Отдельного бэкенда нет: вся серверная логика живёт в Nitro (встроенный сервер
+Nuxt) под `server/`.
+
+## Что внутри
+
+- **Nuxt 4 / Vue 3** (`<script setup>`), SSR включён
+- **SQLite** через `better-sqlite3`, полнотекстовый поиск на FTS5 (`unicode61`,
+  корректно работает с кириллицей)
+- **Tailwind CSS v4** — вся вёрстка
+- **Скрейпер LiveJournal**: RSS для свежих постов, календарный архив + Atom для
+  старых, JSON-RPC для комментариев; вежливый режим (свой User-Agent, паузы)
+- **Санитизация HTML** контента из ЖЖ по allowlist, выведенному из реальных данных
+- **Админ-доступ**: чтение и поиск открыты всем, скрейпинг — по паролю
+
+## Быстрый старт
+
+```bash
+pnpm install
+cp .env.example .env      # задать NUXT_ADMIN_PASSWORD и NUXT_SESSION_PASSWORD
+pnpm dev                  # http://localhost:3000
+```
+
+Сгенерировать ключ подписи сессии:
+
+```bash
+openssl rand -base64 32
+```
+
+Наполнить базу: открыть `/admin`, войти по паролю — на главной появятся кнопки
+скрейпинга («Скрейпить последние посты», «Загрузить старые», «Докачать
+пропущенные»). Без `.env` сайт работает в режиме только чтения.
+
+Файл базы — `.data/blog.db` (в `.gitignore`), путь переопределяется через `DB_PATH`.
+
+## Команды
+
+| Команда | Что делает |
+|---|---|
+| `pnpm dev` | дев-сервер на http://localhost:3000 |
+| `pnpm dev:debug` | то же + лог исходящих запросов к ЖЖ в терминал |
+| `pnpm build` / `pnpm preview` | прод-сборка Nitro и её запуск |
+| `pnpm test` | Vitest |
+
+Разовые операции над БД (`npx tsx scripts/<файл>`):
+
+- `backfill-sanitize.ts` — прогнать всю базу через санитайзер и пересобрать
+  поисковый индекс (пакетно, возобновляемо, со снапшотом)
+- `analyze-html.mjs` — частоты тегов и атрибутов в сохранённом HTML
+- `check-sanitize.ts` — проверить санитайзер на всей базе
+- `make-seed-db.ts` — маленькая БД из боевой, для тестов
+
+## Деплой
+
+Прод — ВМ с Docker: приложение + Caddy с автоматическим HTTPS. Пуш в `main`
+собирает образ, кладёт его в GHCR и выкатывает на сервер с проверкой
+работоспособности и автоматическим откатом при неудаче.
+
+Пошаговая настройка с нуля — **[deploy/SETUP.md](deploy/SETUP.md)**.
+
+## Документация
+
+- `CLAUDE.md` — архитектура, механика скрейпинга, безопасность, деплой
+- `AGENTS.md` — правила внесения изменений и инварианты
+- `deploy/SETUP.md` — развёртывание на сервере
+
+## Статус
+
+Пет-проект для обучения. Контент принадлежит автору блога; скрейпер сделан
+вежливым и не предназначен для нагрузки на LiveJournal.

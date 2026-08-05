@@ -20,10 +20,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `pnpm dev` — дев-сервер Nuxt (http://localhost:3000)
 - `pnpm build` — прод-сборка (Nitro), `pnpm preview` — просмотр сборки
 - `pnpm generate` — статическая генерация
+- `pnpm test` — Vitest (`*.test.ts` рядом с кодом), `pnpm test:watch` — в watch-режиме
 - `npx nuxt prepare` — перегенерировать типы/`.nuxt` (запускается и как postinstall)
-- Запустить скрейпинг (наполнить БД): `curl -X POST localhost:3000/api/scrape`
 
-Отдельного тест-раннера нет. Типы проверяются Nuxt/Vue при сборке.
+**Для скрейпинга нужен `.env`** (см. `.env.example`): без `NUXT_ADMIN_PASSWORD` и
+`NUXT_SESSION_PASSWORD` сайт работает только на чтение, а scrape-эндпоинты отдают
+401. Скрейпить через UI: войти на `/admin` → кнопки появятся на главной.
+
+Скрипты (`scripts/`, запускать через `npx tsx`):
+
+- `backfill-sanitize.ts` — разовый прогон всей БД через санитайзер + пересборка FTS
+  (пакетно, возобновляемо, со снапшотом; `--skip-snapshot`, `--force`, `--batch=N`)
+- `analyze-html.mjs` — частоты тегов/атрибутов/схем URL в БД (по ним выведен
+  allowlist санитайзера); запускается обычным `node`
+- `check-sanitize.ts` — проверка санитайзера на всей БД: атаки, идемпотентность, потери
+- `make-seed-db.ts` — маленькая БД из боевой (для smoke-теста контейнера)
+
+Типы проверяются Nuxt/Vue при сборке.
 
 ## Источник данных (LiveJournal)
 
@@ -61,9 +74,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Архитектура
 
 - `server/db/` — SQLite через `better-sqlite3` (синхронный). `index.ts` —
-  singleton-подключение, при старте применяет `schema.sql` (idempotent). Файл БД —
-  `.data/blog.db` (в `.gitignore`). Таблицы: `posts`, `comments`, FTS5 `search`,
-  плюс мелкий key-value `meta` (кэш, напр. общее число постов блога `blog_total`).
+  singleton-подключение, при старте применяет схему (idempotent). Схема лежит в
+  **`schema.ts`** экспортируемой строкой, а не в `.sql`-файле: Nitro бандлит только
+  JS, и `readFileSync` от `process.cwd()` в проде падал бы с ENOENT. Путь к файлу
+  БД — `DB_PATH` либо `.data/blog.db` (в `.gitignore`). Таблицы: `posts`,
+  `comments`, FTS5 `search`, плюс key-value `meta` (ключи собраны в `meta.ts`:
+  `blog_total`, `blog_total_at`, `html_sanitizer_version`).
 - **Поиск** — таблица FTS5 `search` с токенайзером `unicode61` (пословный поиск:
   целые слова, не подстроки; unicode-aware для кириллицы; без стеммера — формы
   слова не склеиваются). Наполняется из `posts`/`comments` при скрейпинге; запрос —
@@ -110,15 +126,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Агрессивный режим (`aggressive`):** галочка на фронте → `{ aggressive:true }` в
   теле любого scrape-эндпоинта → `ScrapeOpts.aggressive`. Отключает вежливые паузы
   (`sleep`) и качает посты **пулом параллельно** (`AGGRESSIVE_CONCURRENCY`, сейчас 6;
-  `runPool` в `scrape.ts`; `fetchAllComments` тоже без пауз). Быстрее, но жёстче к
-  ЖЖ — риск троттлинга/бана, поэтому только по явному запросу. По умолчанию выключен
-  (последовательно, с паузами).
-- `server/api/` — Nitro routes: `scrape.post.ts` (свежий хвост, `{ limit? }` 1..25),
-  `scrape/more.post.ts` (дозагрузка старых, `{ count? }` ≥1 без потолка → `scrapeOlder`),
-  `scrape/newer.post.ts` (дозагрузка новых, `{ count? }` ≥1 без потолка → `scrapeNewer`),
+  `runPool` в `server/utils/pool.ts` — общий со пробингом картинок;
+  `fetchAllComments` тоже без пауз). Быстрее, но жёстче к ЖЖ — риск троттлинга/бана.
+  **В production принудительно выключен** (`readAggressive` в
+  `server/utils/scrape-endpoint.ts`): на слабой ВМ шесть параллельных загрузок
+  выигрыша не дают, а к ЖЖ жёстки. Доступен только в dev.
+- `server/api/` — Nitro routes. **Закрыты админ-доступом** (см. «Безопасность»):
+  `scrape.post.ts` (свежий хвост, `{ limit? }` 1..25),
+  `scrape/more.post.ts` (дозагрузка старых, `{ count? }` 1..`MAX_SCRAPE_COUNT` → `scrapeOlder`),
+  `scrape/newer.post.ts` (дозагрузка новых, тот же диапазон → `scrapeNewer`),
   `scrape/missing.post.ts` (докачать пропущенные, `{ aggressive? }` → `scrapeMissing`),
-  `blog-stats.get.ts` (сохранено + кэш общего числа) / `blog-stats.post.ts`
-  (пересчёт `countBlogPosts` → кэш в `meta`),
+  `blog-stats.post.ts` (пересчёт `countBlogPosts` → кэш в `meta`).
+  Общая обвязка всех четырёх scrape-роутов — `server/utils/scrape-endpoint.ts`
+  (блокировка, заголовки NDJSON, поток). Открыты всем:
+  `blog-stats.get.ts` (сохранено + кэш общего числа),
+  `admin/login.post.ts` / `admin/logout.post.ts` / `admin/me.get.ts`,
+  `healthz.get.ts` (готовность: непустая БД, живой FTS, версия санитайзера, `BUILD_SHA`;
+  при неготовности — 503),
   `posts.get.ts?page=N` (страница списка постов, 10 на страницу, ответ
   `{ page, totalPages, total, posts }`), `posts/[id].get.ts` (мета + счётчик
   комментов), `posts/[id]/comments.get.ts?page=N` (страница комментов +
@@ -138,10 +162,146 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   на просмотр не дёргают. Пробинг на сервере (браузеру мешает CORS), с кэшем размеров
   в памяти процесса; идемпотентен — повторный скрейп не портит уже вписанное. Иконки
   `<lj user>` (`l-stat.livejournal.net`) не пробятся — их размер задаёт CSS
-  (`.i-ljuser-userhead`).
+  (`.i-ljuser-userhead`). Ходит пулом (`PROBE_CONCURRENCY`) и **через `fetchPublic`**,
+  а не голым `fetch` — `src` задаёт автор коммента, см. «Безопасность».
 
 Важно про структуру Nuxt 4: `srcDir` = `app/` (алиасы `~`/`@` указывают туда),
 а `server/` лежит в **корне** проекта, не внутри `app/`.
+
+## Безопасность
+
+Проект рассчитан на публичный хостинг, и это меняет модель угроз: контент приходит
+из чужого источника, а у админа есть кука. Ниже — то, что нельзя случайно откатить.
+
+### Санитизация HTML
+
+Тело поста и комментов выводится через `v-html` (`CommentTree.vue`,
+`pages/posts/[id].vue`). Без очистки сохранённый в комменте `onerror` выполнился бы
+в браузере админа и дёрнул скрейп от его имени — `httpOnly` тут не помогает, браузер
+сам приложит куку к same-origin запросу. Фильтрация на стороне ЖЖ нашей границей
+безопасности не является.
+
+`server/utils/lj/sanitize.ts` — `sanitizeLjHtml` (allowlist) и `safeExternalUrl`
+(URL вне HTML: `authorJournal` уходит прямо в `href`). Allowlist **выведен из
+данных** (`scripts/analyze-html.mjs` по 5746 постам и 300 917 комментам), а не
+придуман. Значимые решения:
+
+- `<iframe>` разрешён, но только с доменов из `ALLOWED_IFRAME_DOMAINS`
+  (783 из 810 iframe в базе — YouTube; запрет выкинул бы всё видео блога);
+  iframe без валидного `src` дропается через `exclusiveFilter`.
+- `width`/`height`/`loading`/`decoding` у `<img>` обязаны быть в allowlist — их
+  вписывает `reserveImgSpace`, и без них бэкофилл вернул бы layout shift.
+- Разметка бейджей `<lj user>` (`class`, `data-ljuser`, `lj:user`) сохраняется.
+- Protocol-relative URL (`//host/x`) поднимаются до `https:`, а не выбрасываются.
+- **Не** разрешены: атрибут `style` (sanitize-html не фильтрует URL внутри CSS),
+  `<use>`/`xlink:href`, `object`/`embed`/`param`, `srcset`/`sizes`/`ng-src`.
+
+Порядок в `savePost` важен: **санитизация → `reserveImgSpace` → запись**. Пробинг
+ходит наружу по `<img src>` и должен разбирать уже проверенную разметку. В
+`createPersister` санитизацию класть нельзя — там всё внутри `db.transaction`.
+
+`HTML_SANITIZER_VERSION` + `meta.html_sanitizer_version`: по ним `backfill-sanitize.ts`
+понимает, что базу надо прогнать заново, а `healthz` — что база несанитизирована
+(в т.ч. поднятая из старого бэкапа). **При изменении allowlist версию увеличить.**
+
+После бэкофилла **обязательна пересборка FTS** (`rebuildSearchIndex`): `htmlToText`
+снимает теги, но содержимое `<script>` оставляет, а sanitize-html вырезает целиком —
+без пересборки поиск находил бы текст, которого на странице уже нет.
+
+### Админ-доступ
+
+Один пароль из env + подписанная httpOnly-кука штатным механизмом h3 (новых
+зависимостей не нужно). `server/utils/session.ts` + `server/middleware/admin-guard.ts`.
+
+- Guard — **единственная** точка контроля, и он один для всех запросов. Сначала
+  считает `event.context.isAdmin`, **потом отдельным шагом** закрывает пути
+  (`isGuarded` в `server/utils/guarded-routes.ts`, покрыт тестами). Ранний `return`
+  при отсутствии куки здесь недопустим: он пропустил бы проверку, и анонимный POST
+  дошёл бы до скрейпера.
+- Middleware работает до хендлеров — 401 уходит обычным JSON **до** начала
+  NDJSON-потока.
+- В `isAdmin` используется `unsealSession`, а **не** `useSession`: у h3 `getSession`
+  при отсутствии куки заводит новую сессию, ставит её и падает при пустом пароле —
+  это выдавало бы куку каждому анонимному читателю и роняло публичные страницы,
+  когда пароль не задан.
+- Пустой `NUXT_ADMIN_PASSWORD` = скрейпинг закрыт наглухо, а не открыт всем.
+- Кука: `httpOnly`, `SameSite=Strict`, `secure` только в production (иначе не
+  сохранится на локальном HTTP). `sessionHeader: false` — иначе h3 примет сессию
+  из заголовка. Пароли сравниваются по SHA-256-дайджестам через `timingSafeEqual`
+  (на буферах разной длины он бросает исключение).
+- Флаг на фронт попадает через `app/plugins/admin.server.ts` → `useState('is-admin')`:
+  сериализуется в payload, поэтому hydration mismatch невозможен и лишнего запроса нет.
+- `readScrapeStream` в `index.vue` **обязан** проверять `res.ok` до чтения тела: на
+  401 сервер отдаёт обычный JSON, и разбор его как NDJSON дал бы ложный успех.
+
+### SSRF при пробинге картинок
+
+`src` картинок задаёт автор поста или коммента, а сервер по нему ходит. Проверка
+«сначала `dns.lookup`, потом `fetch` по имени» не годится — между ними имя может
+перерезолвиться во внутренний адрес (DNS rebinding). Поэтому в
+`server/utils/safe-fetch.ts` валидация встроена в **резолвер undici-диспетчера**:
+соединение возможно только с публичным адресом, и редиректы проверяются автоматически
+тем же диспетчером. Плюс `readCapped` — читаем максимум 64 КиБ: `Range` это просьба,
+а не гарантия, и `arrayBuffer()` покорно сложил бы в память сколь угодно большой ответ.
+
+Диспетчер локальный, не глобальный, — режим `HTTPS_PROXY` из
+`http-observability.ts` остаётся рабочим для остального трафика.
+
+### Ограничение ресурсов
+
+Аутентификация ограничивает, *кто* запускает, но не *сколько*.
+
+- `server/utils/job-lock.ts` — одна долгая задача на процесс (скрейп либо пересчёт
+  статистики), вторая получает 409. Блокировку **обязательно** освобождать в
+  `finally` внутри самой stream-задачи: хендлер возвращает `ReadableStream`
+  мгновенно, работа идёт уже внутри него, и внешний `finally` снял бы её сразу
+  после старта. Есть дедлайн — повисшая задача не блокирует кнопки до перезапуска.
+- Потолок `count` (`MAX_SCRAPE_COUNT`), таймаут на каждый запрос к ЖЖ
+  (`REQUEST_TIMEOUT_MS` в `client.ts`) и `AbortSignal`, проверяемый между постами.
+- `server/utils/rate-limit.ts` — лимиты на `/api/admin/login` и на публичный
+  `/api/search` (он синхронный: поток запросов блокировал бы event loop всему сайту).
+  IP берётся из `X-Forwarded-For`, поэтому обратный прокси обязан **перезаписывать**
+  этот заголовок, а не дописывать в него.
+
+## Деплой
+
+Прод — ВМ Cloud.ru (Ubuntu 24.04, free tier) с Docker: приложение + Caddy как
+TLS-терминатор. Пошаговая инструкция первичной настройки — **`deploy/SETUP.md`**.
+
+- `Dockerfile` — multi-stage на `node:24`. Nitro сам кладёт `better-sqlite3`
+  вместе с `.node`-бинарём в `.output`, докопировать зависимости не нужно.
+  Контейнер работает под UID 10001: под root SQLite создавал бы `-wal`/`-shm`
+  с владельцем root на примонтированном томе.
+- `deploy/docker-compose.yml` — образ задаётся строго по SHA-тегу
+  (`IMAGE_REF`, обязательная переменная), том `/srv/evo/data` монтируется
+  каталогом, у логов ограничен размер (диска 30 ГБ).
+- `deploy/Caddyfile` — автоматический TLS. Два неочевидных места:
+  `header_up X-Forwarded-For {remote_host}` **перезаписывает** заголовок (иначе
+  rate limit обходится подделкой), а `flush_interval -1` обеспечивает
+  инкрементальную отдачу NDJSON — заголовок `x-accel-buffering` из наших
+  эндпоинтов это соглашение nginx, Caddy его не понимает.
+- `deploy/deploy.sh` — выкладка с настоящим откатом: успех подтверждается
+  публичным HTTPS-ответом `/api/healthz` **со сверкой `sha`** (иначе можно
+  зачесть здоровый старый контейнер), при любой неудаче стек возвращается на
+  предыдущий образ и только потом скрипт падает. Предыдущий образ намеренно не
+  удаляется — иначе откатываться не на что.
+- `.github/workflows/deploy.yml` — тесты и сборка → образ в GHCR под SHA-тегом →
+  доставка конфигов `rsync` (кроме `.env` и `image.env`) → `deploy.sh` по SSH.
+  Перед выкладкой проверяется, что коммит всё ещё HEAD ветки: порядок
+  постановки deploy-джобов не гарантирован, и медленная старая сборка иначе
+  откатила бы прод.
+- **Bootstrap GHCR:** новый пакет создаётся приватным, поэтому первый прогон
+  запускается через `workflow_dispatch` со снятой галочкой *deploy*, затем
+  пакет вручную переводится в public.
+- `scripts/transfer-db.sh` — разовый перенос БД: снимок через SQLite Backup API
+  (копировать живой файл с WAL нельзя), `integrity_check` с обеих сторон,
+  сверка sha256, атомарная подмена и удаление старых `-wal`/`-shm` — иначе
+  SQLite попытается применить их к новому файлу.
+- `deploy/backup.sh` + systemd-таймер — бэкап в объектное хранилище Cloud.ru с
+  проверкой контрольной суммы после загрузки и ротацией.
+
+Важно про free tier: удаление ВМ уничтожает загрузочный диск, поэтому offsite-бэкап
+настраивается **до** боевой эксплуатации, а не после.
 
 ## Наблюдение за запросами
 

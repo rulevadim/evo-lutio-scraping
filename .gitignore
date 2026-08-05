@@ -21,6 +21,11 @@ dist-ssr
 # Локальная БД скрейпера
 .data
 
+# Секреты (пароль админа, session secret). Репозиторий публичный.
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
