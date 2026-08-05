@@ -1,25 +1,29 @@
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import Database from 'better-sqlite3'
 import { htmlToText } from '../utils/lj/text'
+import { SCHEMA_SQL } from './schema'
 
 let _db: Database.Database | null = null
 
+/** Путь к файлу БД: `DB_PATH` (прод, том контейнера) либо `.data/blog.db` локально. */
+export function dbPath(): string {
+  return process.env.DB_PATH || join(process.cwd(), '.data', 'blog.db')
+}
+
 /**
- * Singleton-подключение к SQLite. Файл БД — `.data/blog.db` в корне проекта.
- * При первом обращении создаёт папку и применяет схему (idempotent).
+ * Singleton-подключение к SQLite. Файл БД — `DB_PATH` либо `.data/blog.db` в корне
+ * проекта. При первом обращении создаёт папку и применяет схему (idempotent).
  */
 export function useDb(): Database.Database {
   if (_db) return _db
 
-  const file = join(process.cwd(), '.data', 'blog.db')
+  const file = dbPath()
   mkdirSync(dirname(file), { recursive: true })
 
   const db = new Database(file)
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
-
-  const schema = readFileSync(join(process.cwd(), 'server', 'db', 'schema.sql'), 'utf8')
 
   // Миграция: старый индекс на trigram пересобираем под новый токенайзер
   // (unicode61) из уже сохранённых постов/комментов, без обращения к ЖЖ.
@@ -29,7 +33,7 @@ export function useDb(): Database.Database {
   const needsRebuild = Boolean(existing && /trigram/i.test(existing.sql))
   if (needsRebuild) db.exec('DROP TABLE search')
 
-  db.exec(schema)
+  db.exec(SCHEMA_SQL)
 
   if (needsRebuild) rebuildSearchIndex(db)
 

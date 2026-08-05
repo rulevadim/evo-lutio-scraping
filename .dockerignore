@@ -1,0 +1,21 @@
+# База — 776 МБ, в образ не едет: она живёт на томе.
+# Без этой строки весь файл уходит в контекст сборки.
+.data
+
+node_modules
+.nuxt
+.output
+.nitro
+.cache
+
+# Секреты
+.env
+.env.*
+!.env.example
+
+.git
+.github
+.idea
+.vscode
+.DS_Store
+*.log

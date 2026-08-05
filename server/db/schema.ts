@@ -1,3 +1,10 @@
+/**
+ * Схема БД. Раньше лежала в `schema.sql` и читалась `readFileSync` от `process.cwd()`,
+ * но Nitro бандлит только JS — в `.output` файла нет, и прод падал бы с ENOENT.
+ * Поэтому схема живёт обычным TS-модулем: попадает в бандл автоматически и
+ * читается синхронно (важно, `useDb()` синхронный).
+ */
+export const SCHEMA_SQL = `
 -- Посты. id = ditemid из URL поста (/<ditemid>.html).
 CREATE TABLE IF NOT EXISTS posts (
   id           INTEGER PRIMARY KEY,
@@ -38,8 +45,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
   tokenize = 'unicode61 remove_diacritics 2'
 );
 
--- Мелкий key-value кэш (напр. общее число постов блога и время его подсчёта).
+-- Мелкий key-value кэш (напр. общее число постов блога и время его подсчёта,
+-- версия санитайзера HTML — см. meta-ключи в server/db/meta.ts).
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+`
