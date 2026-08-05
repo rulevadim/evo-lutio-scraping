@@ -116,6 +116,7 @@ const scan = ref<{ done: number; total: number } | null>(null) // фаза об�
 const oldCount = ref(20) // выбранное число для «Загрузить старые» (≥1, без потолка)
 const aggressive = ref(false) // агрессивный режим: без пауз + параллельно (жёстко к ЖЖ)
 const blogStats = useBlogStats()
+const { isAdmin, handleError } = useAdmin()
 
 interface ScrapeEvent {
   type: 'scan' | 'start' | 'progress' | 'done' | 'error'
@@ -132,11 +133,22 @@ async function readScrapeStream(
   body: Record<string, number | boolean>,
   onEvent: (e: ScrapeEvent) => void,
 ) {
+  // Кука уходит сама: нативный fetch на same-origin по умолчанию шлёт
+  // credentials: 'same-origin'.
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
+  // Проверять статус нужно ДО чтения тела. При 401/409 сервер отдаёт обычный JSON
+  // ошибки, а не NDJSON: разбор такой строки дал бы событие без известного `type`,
+  // цикл спокойно завершился бы, и пользователь увидел бы ложный успех
+  // («Новее сохранённых постов нет») вместо «войдите заново».
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status}`) as Error & { status: number }
+    err.status = res.status
+    throw err
+  }
   if (!res.body) throw new Error('Пустой ответ')
 
   const reader = res.body.getReader()
@@ -180,8 +192,8 @@ async function runScrape(
     scrapeMsg.value = ok(posts)
     await refresh()
     await blogStats.refresh() // обновить счётчик «сохранено» в шапке
-  } catch {
-    scrapeMsg.value = 'Не удалось загрузить. Попробуйте ещё раз.'
+  } catch (err) {
+    scrapeMsg.value = handleError(err)
   } finally {
     scraping.value = false
     progress.value = null
@@ -306,15 +318,17 @@ function fmtDate(ts: number): string {
       <!-- Пусто: предложить первый скрейп -->
       <div v-else-if="!data?.posts.length" class="space-y-3">
         <p class="text-sm text-neutral-500">Постов пока нет.</p>
-        <button
-          type="button"
-          class="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm hover:border-neutral-500 disabled:opacity-50"
-          :disabled="scraping"
-          @click="scrapeLatest"
-        >
-          {{ scraping ? 'Загружаем…' : 'Скрейпить последние посты' }}
-        </button>
-        <p v-if="scrapeMsg" class="text-xs text-neutral-500">{{ scrapeMsg }}</p>
+        <template v-if="isAdmin">
+          <button
+            type="button"
+            class="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm hover:border-neutral-500 disabled:opacity-50"
+            :disabled="scraping"
+            @click="scrapeLatest"
+          >
+            {{ scraping ? 'Загружаем…' : 'Скрейпить последние посты' }}
+          </button>
+          <p v-if="scrapeMsg" class="text-xs text-neutral-500">{{ scrapeMsg }}</p>
+        </template>
       </div>
 
       <template v-else>
@@ -336,7 +350,9 @@ function fmtDate(ts: number): string {
 
         <div class="mt-6 flex flex-col items-center gap-3">
           <Pagination :page="page" :total="data.totalPages" @update:page="(p) => (page = p)" />
-          <div class="flex flex-wrap items-center justify-center gap-2">
+
+          <!-- Скрейпинг — только для админа; пагинация выше видна всем. -->
+          <div v-if="isAdmin" class="flex flex-wrap items-center justify-center gap-2">
             <button
               type="button"
               class="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm hover:border-neutral-500 disabled:opacity-50"
@@ -395,7 +411,7 @@ function fmtDate(ts: number): string {
           </div>
 
           <!-- Прогресс загрузки: реально видно, сколько постов из скольких -->
-          <div v-if="scraping" class="w-full max-w-xs">
+          <div v-if="isAdmin && scraping" class="w-full max-w-xs">
             <template v-if="scan">
               <div class="mb-1 flex justify-between text-xs text-neutral-500">
                 <span>Сканируем архив…</span>
@@ -422,7 +438,7 @@ function fmtDate(ts: number): string {
             </template>
             <p v-else class="text-center text-xs text-neutral-400">Готовим список…</p>
           </div>
-          <p v-else-if="scrapeMsg" class="text-xs text-neutral-500">{{ scrapeMsg }}</p>
+          <p v-else-if="isAdmin && scrapeMsg" class="text-xs text-neutral-500">{{ scrapeMsg }}</p>
         </div>
       </template>
     </section>

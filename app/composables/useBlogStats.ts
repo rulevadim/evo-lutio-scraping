@@ -11,6 +11,8 @@ export interface BlogStats {
 export function useBlogStats() {
   const stats = useState<BlogStats | null>('blog-stats', () => null)
   const counting = useState<boolean>('blog-stats-counting', () => false)
+  const countError = useState<string>('blog-stats-error', () => '')
+  const { handleError } = useAdmin()
 
   // Первичная подгрузка (сохранено + кэш общего). Идемпотентна.
   async function ensureLoaded() {
@@ -26,12 +28,16 @@ export function useBlogStats() {
   async function count() {
     if (counting.value) return
     counting.value = true
+    countError.value = ''
     try {
       stats.value = await $fetch<BlogStats>('/api/blog-stats', { method: 'POST' })
+    } catch (err) {
+      // Сессия могла истечь молча — handleError сбросит флаг админа, и кнопка исчезнет.
+      countError.value = handleError(err)
     } finally {
       counting.value = false
     }
   }
 
-  return { stats, counting, ensureLoaded, refresh, count }
+  return { stats, counting, countError, ensureLoaded, refresh, count }
 }

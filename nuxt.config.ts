@@ -11,6 +11,14 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/main.css'],
 
+  // Секреты только на сервере (в publicRuntimeConfig их быть не должно).
+  // Значения приходят из env: NUXT_ADMIN_PASSWORD и NUXT_SESSION_PASSWORD.
+  // Пустые по умолчанию = вход не настроен = скрейпинг закрыт наглухо.
+  runtimeConfig: {
+    adminPassword: '',
+    sessionPassword: '',
+  },
+
   vite: {
     plugins: [tailwindcss()],
   },
