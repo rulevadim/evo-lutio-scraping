@@ -1,20 +1,35 @@
 import { useDb } from '~~/server/db'
+import { META, setMeta } from '~~/server/db/meta'
+import { acquireJob, currentJob } from '~~/server/utils/job-lock'
 import { countBlogPosts } from '~~/server/utils/lj/stats'
 
 // POST /api/blog-stats — пересчитать общее число постов блога (обход архива по
 // месяцам, ~150 запросов, долго) и закэшировать в meta. Возвращает актуальные
 // { scraped, total, countedAt }.
+// Только для админа (server/middleware/admin-guard.ts).
 export default defineEventHandler(async () => {
-  const db = useDb()
-  const total = await countBlogPosts()
-  const now = Math.floor(Date.now() / 1000)
+  // Та же блокировка, что у скрейпа: обход архива — тоже долгая задача к ЖЖ, и
+  // запускать её параллельно со скрейпом (или с самой собой) незачем.
+  const job = acquireJob('пересчёт числа постов')
+  if (!job) {
+    throw createError({
+      statusCode: 409,
+      statusMessage: 'Conflict',
+      message: `Уже выполняется: ${currentJob()?.name ?? 'другая задача'}`,
+    })
+  }
 
-  const set = db.prepare(
-    'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-  )
-  set.run('blog_total', String(total))
-  set.run('blog_total_at', String(now))
+  try {
+    const db = useDb()
+    const total = await countBlogPosts()
+    const now = Math.floor(Date.now() / 1000)
 
-  const scraped = (db.prepare('SELECT COUNT(*) AS n FROM posts').get() as { n: number }).n
-  return { scraped, total, countedAt: now }
+    setMeta(db, META.blogTotal, total)
+    setMeta(db, META.blogTotalAt, now)
+
+    const scraped = (db.prepare('SELECT COUNT(*) AS n FROM posts').get() as { n: number }).n
+    return { scraped, total, countedAt: now }
+  } finally {
+    job.release()
+  }
 })

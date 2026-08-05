@@ -1,5 +1,6 @@
 import { useDb } from '~~/server/db'
 import { COMMENTS_PAGE_SIZE } from '~~/server/utils/pagination'
+import { clientIp, rateLimited } from '~~/server/utils/rate-limit'
 
 interface SearchRow {
   kind: 'post' | 'comment'
@@ -11,10 +12,22 @@ interface SearchRow {
 }
 
 const SEARCH_PAGE_SIZE = 100
+/** Осмысленный запрос столько не занимает, а длинный зря гоняет FTS. */
+const MAX_QUERY_LENGTH = 100
+/** Поиск публичный и синхронный (better-sqlite3), а vCPU на бесплатной ВМ — 10%. */
+const SEARCH_MAX_PER_MINUTE = 60
 
 // GET /api/search?q=...&sort=relevance|date_desc|date_asc&page=N&cs=true — поиск.
 export default defineEventHandler((event) => {
-  const q = String(getQuery(event).q ?? '').trim()
+  // Эндпоинт открыт всем, поэтому ограничиваем частоту: better-sqlite3 синхронный,
+  // и поток частых запросов блокировал бы event loop всему сайту.
+  if (rateLimited(`search:${clientIp(event)}`, SEARCH_MAX_PER_MINUTE, 60_000)) {
+    throw createError({ statusCode: 429, statusMessage: 'Too Many Requests' })
+  }
+
+  const q = String(getQuery(event).q ?? '')
+    .trim()
+    .slice(0, MAX_QUERY_LENGTH)
   // Порог в 2 символа — чтобы не искать по слишком коротким/шумным запросам.
   if (q.length < 2) {
     return { query: q, page: 1, totalPages: 1, total: 0, results: [] as unknown[] }
