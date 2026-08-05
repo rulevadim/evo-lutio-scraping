@@ -1,0 +1,11 @@
+[Unit]
+Description=Ежедневный бэкап БД evo-lutio
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+# Если ВМ была выключена в момент срабатывания — сделать при следующем старте.
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

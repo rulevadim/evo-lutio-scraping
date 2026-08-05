@@ -1,0 +1,13 @@
+[Unit]
+Description=Бэкап БД evo-lutio в объектное хранилище
+# Молчащий таймер выглядит точно так же, как успешный: без уведомления бэкапы
+# могут не делаться месяцами незаметно. Заведите evo-backup-failed@.service
+# (почта/телеграм) либо хотя бы регулярно смотрите `systemctl list-timers`.
+OnFailure=evo-backup-failed@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/srv/evo/backup.sh
+User=root
+Nice=10
+IOSchedulingClass=idle

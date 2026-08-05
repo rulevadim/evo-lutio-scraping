@@ -1,0 +1,54 @@
+# Прод-стек на ВМ: приложение + Caddy как TLS-терминатор.
+# Живёт в /srv/evo. Секреты — в /srv/evo/.env (в git не хранится),
+# текущий тег образа — в /srv/evo/image.env (пишется deploy.sh).
+#
+# Запуск вручную:  cd /srv/evo && ./deploy.sh <image-ref> <sha>
+
+services:
+  app:
+    # Только конкретный тег/дайджест, никогда :latest — иначе два быстрых пуша
+    # могут задеплоиться в обратном порядке и откатить прод на старый код.
+    image: ${IMAGE_REF:?IMAGE_REF не задан — запускайте через deploy.sh}
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      DB_PATH: /data/blog.db
+    volumes:
+      # Каталог, а не файл: рядом с БД SQLite создаёт -wal и -shm.
+      # Владелец на хосте должен быть 10001:10001 (пользователь app в образе).
+      - /srv/evo/data:/data
+    expose:
+      - '3000'
+    logging:
+      driver: json-file
+      options:
+        # Диска всего 30 ГБ — логи не должны его съесть.
+        max-size: '10m'
+        max-file: '3'
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      # Домен подставляется в Caddyfile; задаётся в /srv/evo/.env
+      SITE_DOMAIN: ${SITE_DOMAIN:?SITE_DOMAIN не задан в .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # сертификаты Let's Encrypt переживают пересоздание
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+volumes:
+  caddy_data:
+  caddy_config:

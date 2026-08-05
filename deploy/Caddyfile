@@ -1,0 +1,28 @@
+# Домен приходит из переменной окружения (см. SITE_DOMAIN в /srv/evo/.env).
+# Для старта подойдёт nip.io: 185-1-2-3.nip.io резолвится в 185.1.2.3 без
+# регистрации домена, и Let's Encrypt выдаёт на него сертификат.
+{$SITE_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		# Кликджекинг: именно frame-ancestors/X-Frame-Options, а не frame-src.
+		X-Frame-Options DENY
+		# Без includeSubDomains и с умеренным сроком: домен ещё может смениться.
+		Strict-Transport-Security "max-age=2592000"
+		-Server
+	}
+
+	reverse_proxy app:3000 {
+		# ВАЖНО: перезаписываем, а не дописываем. Rate limit на /api/search и
+		# /api/admin/login считает по этому заголовку, а клиент может прислать
+		# свой X-Forwarded-For и обойти лимит одной строкой в запросе.
+		header_up X-Forwarded-For {remote_host}
+
+		# Скрейп отдаёт NDJSON-поток, и прогресс должен доходить по мере работы.
+		# Заголовок x-accel-buffering, который ставит наш эндпоинт, — соглашение
+		# nginx, Caddy его не понимает; за инкрементальность отвечает это.
+		flush_interval -1
+	}
+}
