@@ -1,8 +1,14 @@
 import { imageSize } from 'image-size'
+import { runPool } from '../pool'
+import { fetchPublic, readCapped } from '../safe-fetch'
 
 // Резервирование места под картинки, чтобы не было layout shift.
 // Размеры добывает СЕРВЕР (у браузера кросс-доменный CORS не даёт читать байты CDN),
-// на лету при запросе страницы, и кэширует в памяти процесса.
+// на скрейпе, и кэширует в памяти процесса.
+//
+// `src` здесь — недоверенный: его задаёт автор поста или коммента. Поэтому ходим
+// через `fetchPublic` (только http/https, только публичные адреса, редиректы
+// проверяются тем же диспетчером) и читаем ограниченный кусок тела.
 
 interface Dims {
   w: number
@@ -10,6 +16,11 @@ interface Dims {
 }
 
 const dimsCache = new Map<string, Dims | null>()
+
+/** Больше заголовка не нужно: размеры лежат в первых байтах любого формата. */
+const MAX_PROBE_BYTES = 64 * 1024
+/** Картинок в посте бывает много — не открываем на каждую по соединению. */
+const PROBE_CONCURRENCY = 4
 
 // Статические ассеты ЖЖ (иконки <lj user> и т.п.) — не пробим, размер даёт CSS.
 const SKIP_HOSTS = ['l-stat.livejournal.net']
@@ -23,12 +34,17 @@ async function probeImageSize(url: string): Promise<Dims | null> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 2500)
   try {
-    const res = await fetch(url, {
-      headers: { Range: 'bytes=0-65535', 'User-Agent': 'evo-lutio-reader/0.1' },
+    const res = await fetchPublic(url, {
+      headers: {
+        Range: `bytes=0-${MAX_PROBE_BYTES - 1}`,
+        'User-Agent': 'evo-lutio-reader/0.1',
+      },
       signal: controller.signal,
     })
     if (!res.ok && res.status !== 206) return null
-    const buf = new Uint8Array(await res.arrayBuffer())
+    // Именно readCapped, а не arrayBuffer: сервер вправе проигнорировать Range.
+    const buf = await readCapped(res, MAX_PROBE_BYTES)
+    if (!buf.length) return null
     const { width, height } = imageSize(buf)
     return width && height ? { w: width, h: height } : null
   } catch {
@@ -61,8 +77,11 @@ export async function reserveImgSpace(html: string): Promise<string> {
   }
   if (!urls.size) return html
 
-  // Пробиваем недостающие размеры параллельно.
-  await Promise.all([...urls].map((u) => resolveDims(u)))
+  // Пробиваем недостающие размеры пулом: в посте бывает несколько десятков
+  // картинок, и открывать на каждую своё соединение незачем.
+  await runPool([...urls], PROBE_CONCURRENCY, async (u) => {
+    await resolveDims(u)
+  })
 
   return html.replace(/<img\b[^>]*>/gi, (tag) => {
     const src = tag.match(/\bsrc=["']([^"']+)["']/i)?.[1]

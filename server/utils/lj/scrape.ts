@@ -7,8 +7,10 @@ import { fetchAllComments } from './comments'
 import { reserveImgSpace } from './images'
 import type { RssPost } from './rss'
 import { fetchRecentPosts } from './rss'
+import { safeExternalUrl, sanitizeLjHtml } from './sanitize'
 import { collectArchiveDitemids } from './stats'
 import { htmlToText } from './text'
+import { runPool } from '../pool'
 
 export interface ScrapeResult {
   posts: number
@@ -31,23 +33,17 @@ export interface ProgressOpts {
  */
 export interface ScrapeOpts extends ProgressOpts {
   aggressive?: boolean
+  /**
+   * Отмена всей задачи по дедлайну (см. server/utils/job-lock.ts). Проверяется
+   * между постами, поэтому задача останавливается на границе поста, а не мгновенно.
+   */
+  signal?: AbortSignal
 }
 
 // Сколько постов качать одновременно в агрессивном режиме.
 const AGGRESSIVE_CONCURRENCY = 6
 
 /** Прогнать items через worker с ограничением на одновременность. */
-async function runPool<T>(
-  items: T[],
-  limit: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) await worker(items[cursor++]!)
-  })
-  await Promise.all(runners)
-}
 
 type Db = ReturnType<typeof useDb>
 
@@ -129,17 +125,27 @@ function createPersister(db: Db) {
 type Persister = ReturnType<typeof createPersister>
 
 /**
- * Пробить размеры контент-картинок и вписать их (width/height + lazy) в HTML поста
- * и комментариев, затем persist. Пробинг делаем здесь, на скрейпе (async), чтобы в
- * БД лёг уже готовый HTML — read-эндпоинты ЖЖ на просмотр не дёргают. Возвращает
- * число комментариев.
+ * Очистить HTML, пробить размеры контент-картинок и вписать их (width/height +
+ * lazy), затем persist. Пробинг делаем здесь, на скрейпе (async), чтобы в БД лёг
+ * уже готовый HTML — read-эндпоинты ЖЖ на просмотр не дёргают. Возвращает число
+ * комментариев.
+ *
+ * Порядок важен: санитизация идёт ПЕРВОЙ. `reserveImgSpace` ходит наружу по
+ * `<img src>`, и разбирать он должен уже проверенную разметку, а не сырую из ЖЖ.
+ * Санитизация здесь, а не в `createPersister`: там всё внутри `db.transaction`, и
+ * тяжёлый разбор HTML держал бы транзакцию открытой.
  */
 async function savePost(persist: Persister, post: RssPost, comments: LjComment[]): Promise<number> {
-  const bodyHtml = await reserveImgSpace(post.bodyHtml)
+  const bodyHtml = await reserveImgSpace(sanitizeLjHtml(post.bodyHtml))
   const baked = await Promise.all(
-    comments.map(async (c) => ({ ...c, bodyHtml: await reserveImgSpace(c.bodyHtml) })),
+    comments.map(async (c) => ({
+      ...c,
+      // URL журнала автора уходит прямо в href — санитайзер HTML его не покрывает.
+      authorJournal: safeExternalUrl(c.authorJournal),
+      bodyHtml: await reserveImgSpace(sanitizeLjHtml(c.bodyHtml)),
+    })),
   )
-  persist({ ...post, bodyHtml }, baked)
+  persist({ ...post, url: safeExternalUrl(post.url), bodyHtml }, baked)
   return comments.length
 }
 
@@ -157,6 +163,7 @@ async function persistDitemids(
   let done = 0
 
   const handle = async (id: number) => {
+    opts.signal?.throwIfAborted()
     const post = await fetchPostByItemid(id)
     const comments = await fetchAllComments(id, { aggressive: opts.aggressive })
     commentCount += await savePost(persist, post, comments)
@@ -189,6 +196,7 @@ export async function scrape(limit = 10, opts: ScrapeOpts = {}): Promise<ScrapeR
   let done = 0
 
   const handle = async (post: RssPost) => {
+    opts.signal?.throwIfAborted()
     const comments = await fetchAllComments(post.id, { aggressive: opts.aggressive })
     commentCount += await savePost(persist, post, comments)
     opts.onProgress?.(++done, posts.length)
