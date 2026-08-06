@@ -56,9 +56,16 @@ ssh "$TARGET" APP_UID="$APP_UID" REMOTE_DIR="$REMOTE_DIR" SUM="$SUM" 'bash -euo 
   RESULT=$(sudo sqlite3 "$REMOTE_DIR/blog.db.incoming" "PRAGMA integrity_check;")
   [ "$RESULT" = "ok" ] || { echo "integrity_check на ВМ: $RESULT" >&2; exit 1; }
 
-  echo "  остановка приложения…"
-  if [ -f /srv/evo/docker-compose.yml ]; then
-    (cd /srv/evo && sudo docker compose stop app || true)
+  # Подменять файл под работающим приложением нельзя. Раньше здесь стояло
+  # `|| true`, и падение остановки прошло бы незамеченным.
+  if [ -x /srv/evo/dc ]; then
+    echo "  остановка приложения…"
+    sudo /srv/evo/dc stop app
+  elif [ -f /srv/evo/docker-compose.yml ]; then
+    echo "  ОШИБКА: есть compose-файл, но нет /srv/evo/dc — не могу остановить приложение" >&2
+    exit 1
+  else
+    echo "  приложение ещё не развёрнуто — останавливать нечего"
   fi
 
   # Старые -wal/-shm относятся к СТАРОЙ базе. Если их не убрать, SQLite попытается

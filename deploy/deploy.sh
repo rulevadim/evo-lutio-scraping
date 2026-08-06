@@ -32,11 +32,16 @@ log() { printf '\n▶ %s\n' "$*"; }
 
 write_image_env() { printf 'IMAGE_REF=%s\n' "$1" > "$IMAGE_ENV"; }
 
+# Compose читает переменные для подстановки только из env-файлов, а секреты и
+# текущий тег образа лежат раздельно. Обёртка нужна, чтобы ручные команды на
+# сервере вели себя так же, как деплой: ./dc ps, ./dc logs -f app
+dc() { docker compose --env-file ./.env --env-file "$IMAGE_ENV" "$@"; }
+
 # Поднять стек с указанным образом. --wait ждёт HEALTHY, а не просто «запущен»:
 # compose считает контейнер поднятым сразу, и без этого зелёным был бы даже
 # crash loop.
 bring_up() {
-  IMAGE_REF="$1" docker compose up -d --wait --wait-timeout "$WAIT_TIMEOUT"
+  IMAGE_REF="$1" dc up -d --wait --wait-timeout "$WAIT_TIMEOUT"
 }
 
 # Публичная проверка: и приложение живо, и Caddy с TLS работает.

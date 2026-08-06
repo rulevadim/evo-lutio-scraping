@@ -146,7 +146,7 @@ curl -s "https://<домен>/api/posts?page=1"   # список постов
 - у анонима нет кнопок скрейпинга, `POST /api/scrape` даёт 401;
 - вход на `/admin`, скрейп идёт **инкрементально** (полоса прогресса движется —
   это проверка того, что Caddy не буферизует NDJSON);
-- `docker compose restart app` → данные на месте.
+- `./dc restart app` → данные на месте.
 
 ## 8. Бэкапы
 
@@ -182,8 +182,8 @@ sudo systemctl start evo-backup.service   # разовый прогон
 
 ```bash
 cd /srv/evo
-docker compose ps
-docker compose logs -f app
+./dc ps
+./dc logs -f app
 ./deploy.sh ghcr.io/<user>/evo-lutio-scraping:<sha> <sha>   # ручной деплой/откат
 df -h                                                       # диска всего 30 ГБ
 ```

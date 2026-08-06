@@ -96,12 +96,17 @@ jobs:
       - name: Доставить конфиги на ВМ
         if: env.SKIP != '1'
         # Compose, Caddyfile и скрипты лежат в репозитории, но сами на ВМ не
-        # попадут. Секреты (/srv/evo/.env) и текущий тег (image.env) не трогаем.
+        # попадут.
+        #
+        # ВАЖНО про --delete: он стирает на приёмнике всё, чего нет в источнике.
+        # Без явных исключений он удалял бы каталог data/ — то есть БОЕВУЮ БАЗУ,
+        # а также файлы с секретами, которых в репозитории нет и быть не должно.
         run: |
           install -m 600 -D /dev/stdin ~/.ssh/id_deploy <<< "${{ secrets.SSH_KEY }}"
           ssh-keyscan -H "${{ secrets.SSH_HOST }}" > ~/.ssh/known_hosts 2>/dev/null
           rsync -az --delete \
-            --exclude='.env' --exclude='image.env' \
+            --exclude='data/' \
+            --exclude='.env' --exclude='backup.env' --exclude='image.env' \
             -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes" \
             deploy/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/srv/evo/"
           ssh -i ~/.ssh/id_deploy "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
