@@ -37,7 +37,9 @@ gzip -1 "$SNAP"
 SUM=$(sha "$SNAP.gz")
 echo "  $(du -h "$SNAP.gz" | cut -f1), sha256 $SUM"
 
-echo "▶ Передача на $TARGET…"
+# Скобки обязательны: без них многоточие (многобайтовый символ) в не-UTF-8
+# локали прилипает к имени переменной, и set -u валит скрипт на «$TARGET…».
+echo "▶ Передача на ${TARGET}…"
 scp "$SNAP.gz" "$TARGET:/tmp/blog.db.gz"
 
 echo "▶ Установка на ВМ…"
@@ -82,6 +84,6 @@ REMOTE
 
 echo
 echo "▶ Готово. Поднимите приложение и проверьте healthz:"
-echo "    ssh $TARGET 'cd /srv/evo && docker compose up -d --wait'"
+echo "    ssh ${TARGET} '/srv/evo/dc up -d --wait'"
 echo "    curl -s https://<домен>/api/healthz"
 echo "  Убедившись, что всё в порядке, удалите $REMOTE_DIR/blog.db.prev"
