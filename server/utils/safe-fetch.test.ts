@@ -26,11 +26,31 @@ describe('isBlockedAddress', () => {
     }
   })
 
-  it('блокирует IPv4, завёрнутый в IPv6', () => {
+  it('блокирует IPv4, завёрнутый в IPv6 (запись с точками)', () => {
     // Классический обход наивной проверки «строка начинается на 127.».
     expect(isBlockedAddress('::ffff:127.0.0.1')).toBe(true)
     expect(isBlockedAddress('::ffff:169.254.169.254')).toBe(true)
     expect(isBlockedAddress('::ffff:10.0.0.1')).toBe(true)
+  })
+
+  it('блокирует ту же обёртку в hex-записи', () => {
+    // Именно в неё WHATWG URL нормализует ::ffff:169.254.169.254, и по точке
+    // такой адрес уже не опознать. Пропуск этой формы означал бы доступ к
+    // metadata-сервису облака через http://[::ffff:169.254.169.254]/.
+    expect(isBlockedAddress('::ffff:a9fe:a9fe')).toBe(true) // 169.254.169.254
+    expect(isBlockedAddress('::ffff:7f00:1')).toBe(true) // 127.0.0.1
+    expect(isBlockedAddress('::ffff:a00:1')).toBe(true) // 10.0.0.1
+    expect(isBlockedAddress('::ffff:c0a8:101')).toBe(true) // 192.168.1.1
+  })
+
+  it('не блокирует публичный адрес в той же обёртке', () => {
+    expect(isBlockedAddress('::ffff:808:808')).toBe(false) // 8.8.8.8
+  })
+
+  it('блокирует неразбираемый IPv6', () => {
+    for (const s of ['::ffff::1', 'fe80:::1', '1:2:3:4:5:6:7', 'zz::1']) {
+      expect(isBlockedAddress(s), s).toBe(true)
+    }
   })
 
   it('игнорирует zone id', () => {
@@ -66,8 +86,23 @@ describe('fetchPublic', () => {
     await expect(fetchPublic('http://localhost:1/x')).rejects.toThrow()
   })
 
-  it('не соединяется с адресом metadata облака', async () => {
-    await expect(fetchPublic('http://169.254.169.254/latest/meta-data/')).rejects.toThrow()
+  // Литеральный IP не проходит через резолвер (net.connect зовёт lookup только
+  // для имён), поэтому проверяется отдельной веткой в fetchPublic. Здесь важно
+  // требовать именно UnsafeUrlError: если ждать любую ошибку, тест пройдёт и от
+  // сетевого таймаута — то есть на машине, где адрес просто недоступен, дыру
+  // он не заметит. Ровно так этот случай и проехал мимо локального прогона,
+  // а на раннере GitHub, где metadata-сервис реально отвечает, CI его поймал.
+  it.each([
+    ['metadata облака', 'http://169.254.169.254/latest/meta-data/'],
+    ['loopback', 'http://127.0.0.1:8080/x'],
+    ['частная сеть', 'http://10.0.0.1/x'],
+    ['частная сеть 192.168', 'http://192.168.1.1/x'],
+    ['CGNAT', 'http://100.64.0.1/x'],
+    ['IPv6 loopback', 'http://[::1]:8080/x'],
+    ['IPv6 link-local', 'http://[fe80::1]/x'],
+    ['IPv4 в IPv6-обёртке', 'http://[::ffff:169.254.169.254]/x'],
+  ])('отказывает литеральному адресу: %s', async (_name, url) => {
+    await expect(fetchPublic(url), url).rejects.toBeInstanceOf(UnsafeUrlError)
   })
 })
 

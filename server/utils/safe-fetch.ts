@@ -1,5 +1,6 @@
 import { lookup as dnsLookup } from 'node:dns'
 import type { LookupAddress } from 'node:dns'
+import { isIP } from 'node:net'
 import { Agent, fetch as undiciFetch } from 'undici'
 
 // Защищённый fetch для URL, пришедших из чужого контента (src картинок в постах и
@@ -43,31 +44,69 @@ function ipv4ToInt(ip: string): number | null {
   return n >>> 0
 }
 
+function blockedV4(n: number): boolean {
+  return V4_BLOCKED.some(([base, bits]) => n >>> (32 - bits) === base >>> (32 - bits))
+}
+
+/**
+ * Развернуть IPv6 в 8 групп по 16 бит. `null` — разобрать не удалось.
+ *
+ * Нужно именно развёртывание, а не сравнение строковых префиксов: одна и та же
+ * запись имеет много форм, и URL нормализует их по-своему. Так,
+ * `::ffff:169.254.169.254` превращается в `::ffff:a9fe:a9fe` — по точке такую
+ * запись уже не опознать.
+ */
+function expandIpv6(addr: string): number[] | null {
+  if (!addr.includes(':')) return null
+  const halves = addr.split('::')
+  if (halves.length > 2) return null
+
+  const parse = (s: string) =>
+    s ? s.split(':').filter(Boolean).map((g) => parseInt(g, 16)) : []
+  const head = parse(halves[0]!)
+  if (head.some(Number.isNaN)) return null
+
+  if (halves.length === 1) return head.length === 8 ? head : null
+
+  const tail = parse(halves[1]!)
+  if (tail.some(Number.isNaN)) return null
+  const gap = 8 - head.length - tail.length
+  if (gap < 0) return null
+  return [...head, ...Array(gap).fill(0), ...tail]
+}
+
 /**
  * Непубличный ли адрес. Экспортируется ради тестов: именно этот предикат решает,
- * пустят ли запрос наружу.
+ * пустят ли запрос наружу. Всё, что не удалось уверенно опознать как публичный
+ * адрес, считается непубличным.
  */
 export function isBlockedAddress(ip: string): boolean {
   const addr = ip.trim().toLowerCase().split('%')[0]! // отбросить zone id (fe80::1%eth0)
 
   const v4 = ipv4ToInt(addr)
-  if (v4 !== null) {
-    return V4_BLOCKED.some(([base, bits]) => v4 >>> (32 - bits) === base >>> (32 - bits))
-  }
+  if (v4 !== null) return blockedV4(v4)
 
   if (!addr.includes(':')) return true // не IP вообще — не пускаем
 
-  // IPv4-mapped/-compatible (::ffff:1.2.3.4, ::1.2.3.4) и NAT64 — проверяем как IPv4.
+  // Запись с точками (::ffff:1.2.3.4, ::1.2.3.4) — проверяем хвост как IPv4.
   if (addr.includes('.')) {
     const tail = addr.slice(addr.lastIndexOf(':') + 1)
-    const mapped = ipv4ToInt(tail)
-    return mapped === null || isBlockedAddress(tail)
+    return ipv4ToInt(tail) === null || isBlockedAddress(tail)
   }
 
-  if (addr === '::' || addr === '::1') return true // unspecified / loopback
-  if (/^f[cd]/.test(addr)) return true // fc00::/7  unique-local
-  if (/^fe[89ab]/.test(addr)) return true // fe80::/10 link-local
-  if (/^ff/.test(addr)) return true // ff00::/8  multicast
+  const groups = expandIpv6(addr)
+  if (!groups) return true // не разобрали — не рискуем
+
+  // IPv4-mapped (::ffff:x:x) и IPv4-compatible (::x:x): последние 32 бита — это
+  // IPv4, его и проверяем. Сюда же попадают :: и ::1 (дают 0.0.0.0/8).
+  if (groups.slice(0, 5).every((g) => g === 0) && (groups[5] === 0xffff || groups[5] === 0)) {
+    return blockedV4(((groups[6]! * 0x10000 + groups[7]!) >>> 0) as number)
+  }
+
+  const first = groups[0]!
+  if ((first & 0xfe00) === 0xfc00) return true // fc00::/7  unique-local
+  if ((first & 0xffc0) === 0xfe80) return true // fe80::/10 link-local
+  if ((first & 0xff00) === 0xff00) return true // ff00::/8  multicast
   return false
 }
 
@@ -126,6 +165,15 @@ export async function fetchPublic(
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new UnsafeUrlError(`схема ${parsed.protocol} не разрешена`)
+  }
+
+  // Литеральный IP в URL проверяем здесь, а не в резолвере диспетчера:
+  // net.connect зовёт lookup только для доменных имён — резолвить нечего, и
+  // проверка в lookup просто не выполнилась бы. Именно так
+  // http://169.254.169.254/ (metadata облака) проходил насквозь.
+  const host = parsed.hostname.replace(/^\[|\]$/g, '') // IPv6 приходит в скобках
+  if (isIP(host) && isBlockedAddress(host)) {
+    throw new UnsafeUrlError(`адрес ${host} непубличный`)
   }
 
   return (await undiciFetch(parsed.href, {
